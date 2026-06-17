@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pkg-config --cflags --libs sdl3)",
+      "Bash(find / -name \"SDL.h\" -path \"*SDL3*\")",
+      "Bash(timeout 2 ./bombjack)",
+      "Bash(cmake -B build -DCMAKE_BUILD_TYPE=Release)",
+      "Bash(cmake --build build)",
+      "Bash(./build/bombjack --selftest 300)",
+      "Bash(./build/bombjack --selftest 200)",
+      "Bash(echo \"exit=$? \\(124 = healthy\\)\")",
+      "Bash(./build.sh)",
+      "Bash(./bombjack --selftest 60)",
+      "Bash(SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software ./bombjack --rendertest)",
+      "Bash(timeout 3 env DISPLAY=:1 ./bombjack)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(timeout 3 env DISPLAY=:1 ./bombjack 2>/tmp/bj.log; cat /tmp/bj.log | head)",
+      "Bash(pkg-config --exists sdl3-image)",
+      "Bash(pkg-config --modversion sdl3-image)",
+      "Bash(echo \"SDL3_image: YES $\\(pkg-config --modversion sdl3-image\\)\")",
+      "Bash(find / -name \"SDL_image.h\")",
+      "Bash(cp /home/marti/snap/code/247/.local/share/Trash/files/build.50/_deps/sdl3-src/src/video/stb_image.h /home/marti/proy/bombjack/src/stb_image.h)",
+      "Bash(xxd -i -n screens_png assets/screens.png)",
+      "Bash(python3 -)",
+      "Bash(xxd -i -n spritepack_png assets/spritepack.png)",
+      "Bash(env DISPLAY=:1 BJ_DUMP=/tmp/bj ./bombjack --rendertest)",
+      "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/bj_1.bmp'\\).save\\('/tmp/bj_playing.png'\\); Image.open\\('/tmp/bj_0.bmp'\\).save\\('/tmp/bj_title.png'\\); print\\('ok'\\)\")",
+      "Bash(./bombjack --selftest 120)",
+      "Bash(env DISPLAY=:1 BJ_DUMP=/tmp/v ./bombjack --rendertest)",
+      "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/v_1.bmp'\\).save\\('/tmp/v_playing.png'\\); Image.open\\('/tmp/v_0.bmp'\\).save\\('/tmp/v_title.png'\\); print\\('size',Image.open\\('/tmp/v_1.bmp'\\).size\\)\")",
+      "Bash(./bombjack --selftest 300)"
+    ],
+    "additionalDirectories": [
+      "/tmp"
+    ]
+  }
+}
