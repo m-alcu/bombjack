@@ -646,8 +646,11 @@ void drawPlayfieldBorder(SDL_Renderer* r, int screen) {
     for (int i = 0; i < 8; ++i) {
         setCol(r, pal[i]);
         fillR(r, x0 + i, y0 + i, w - 2.0f * i, 1.0f);                     // top
-        fillR(r, x0 + i, y0 + h - 1.0f - i, w - 2.0f * i, 1.0f);          // bottom
         fillR(r, x0 + i, y0 + i, 1.0f, h - 2.0f * i);                      // left
+
+        // Invert shading on bottom/right for a beveled volume look.
+        setCol(r, pal[7 - i]);
+        fillR(r, x0 + i, y0 + h - 1.0f - i, w - 2.0f * i, 1.0f);          // bottom
         fillR(r, x0 + w - 1.0f - i, y0 + i, 1.0f, h - 2.0f * i);           // right
     }
 }
