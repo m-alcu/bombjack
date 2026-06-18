@@ -47,6 +47,7 @@
 #include "screens_png.h"
 #include "banner_png.h"     // the colorful "BOMB JACK" title logo (191x79)
 #include "live_png.h"        // little Jack life icon for the HUD (31x32)
+#include "jack_png.h"        // Jack animation frames (15 x 16x15) from the original
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
 
@@ -272,7 +273,6 @@ void useScreen(SDL_Renderer* r) {
 // pixel map (its colour is stage-specific in the arcade). No runtime files.
 // ---------------------------------------------------------------------------
 enum SpriteId {
-    SP_JACK_STAND, SP_JACK_WALK, SP_JACK_JUMP,
     SP_BOMB, SP_ENEMY1, SP_ENEMY2,
     SP_MUMMY, SP_MUMMY_WALK, SP_MUMMY_FALL,
     SP_SPHERE1, SP_SPHERE2, SP_ORB1, SP_ORB2, SP_HORN1, SP_HORN2,
@@ -282,6 +282,21 @@ enum SpriteId {
 
 struct Sprite { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 Sprite g_sprites[SP_COUNT];
+
+// Jack's animation frames, mirroring the original game (bombjack-resources):
+// an idle pose, a 4-frame walk cycle per direction, and directional flying
+// (rising) / falling poses. Frame order matches the embedded jack_png strip.
+enum JackFrame {
+    JF_IDLE,
+    JF_WALK_R0, JF_WALK_R1, JF_WALK_R2, JF_WALK_R3,
+    JF_WALK_L0, JF_WALK_L1, JF_WALK_L2, JF_WALK_L3,
+    JF_FLY, JF_FLY_R, JF_FLY_L,
+    JF_FALL, JF_FALL_R, JF_FALL_L,
+    JF_COUNT
+};
+constexpr int JACK_FW = 16, JACK_FH = 15;     // native frame size in the strip
+constexpr float JACK_WALK_FRAME = 0.125f;     // 0.5s / 4 frames (arcade rate)
+SDL_Texture* g_jackTex[JF_COUNT] = {};
 
 SDL_Color paletteColor(char c) {
     switch (c) {
@@ -326,8 +341,7 @@ void buildSprites(SDL_Renderer* ren) {
     // Character sprites: crop each from the embedded official sprite sheet.
     struct PackRect { SpriteId id; int x, y, w, h; };
     static const PackRect packRects[] = {
-        {SP_JACK_STAND, 0, 0, 15, 16}, {SP_JACK_WALK, 15, 0, 15, 16},
-        {SP_JACK_JUMP, 30, 0, 15, 16}, {SP_BOMB, 45, 0, 16, 18},
+        {SP_BOMB, 45, 0, 16, 18},
         {SP_ENEMY1, 61, 0, 18, 16},    {SP_ENEMY2, 79, 0, 18, 16},
         {SP_MUMMY, 97, 0, 14, 16},     {SP_MUMMY_WALK, 111, 0, 14, 16},
         {SP_MUMMY_FALL, 125, 0, 14, 16},
@@ -369,6 +383,26 @@ void buildSprites(SDL_Renderer* ren) {
         }
     g_sprites[SP_PLAT] = {pw, ph, texFromSurface(ren, s)};
     SDL_DestroySurface(s);
+
+    // Jack animation frames: slice the embedded strip into JF_COUNT cells.
+    int jw = 0, jh = 0, jc = 0;
+    stbi_uc* jpx = stbi_load_from_memory(jack_png, (int)jack_png_len,
+                                         &jw, &jh, &jc, 4);
+    if (jpx) {
+        SDL_Surface* strip =
+            SDL_CreateSurfaceFrom(jw, jh, SDL_PIXELFORMAT_RGBA32, jpx, jw * 4);
+        for (int i = 0; i < JF_COUNT; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(JACK_FW, JACK_FH, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{i * JACK_FW, 0, JACK_FW, JACK_FH};
+            SDL_BlitSurface(strip, &src, f, nullptr);
+            g_jackTex[i] = texFromSurface(ren, f);
+            SDL_DestroySurface(f);
+        }
+        SDL_DestroySurface(strip);
+        stbi_image_free(jpx);
+    } else {
+        std::fprintf(stderr, "jack sprite decode failed\n");
+    }
 }
 
 void drawSprite(SDL_Renderer* r, SpriteId id, float x, float y, float w, float h,
@@ -857,17 +891,27 @@ void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
 
 void drawPlayer(SDL_Renderer* r, const Player& p, float t) {
     if (p.invuln > 0 && std::fmod(t, 0.16f) < 0.08f) return;  // blink when hit
-    SpriteId id;
-    if (!p.onGround)
-        id = SP_JACK_JUMP;
-    else if (std::fabs(p.vx) > 1.0f)
-        id = (std::fmod(t, 0.2f) < 0.1f) ? SP_JACK_WALK : SP_JACK_STAND;
-    else
-        id = SP_JACK_STAND;
+    const bool moving = std::fabs(p.vx) > 1.0f;
+    const bool left   = p.face < 0;
+    int f;
+    if (p.onGround) {
+        if (moving) {
+            int step = (int)(t / JACK_WALK_FRAME) % 4;        // 4-frame cycle
+            f = (left ? JF_WALK_L0 : JF_WALK_R0) + step;
+        } else {
+            f = JF_IDLE;
+        }
+    } else if (p.vy < 0.0f) {                                 // rising -> flying
+        f = moving ? (left ? JF_FLY_L : JF_FLY_R) : JF_FLY;
+    } else {                                                  // descending -> falling
+        f = moving ? (left ? JF_FALL_L : JF_FALL_R) : JF_FALL;
+    }
     // Draw bigger than the collision box (feet anchored to its bottom) so Jack
-    // reads at a similar scale to the bombs and chasers.
+    // reads at a similar scale to the bombs and chasers. The frames are already
+    // drawn facing the right way, so no horizontal flip is needed.
     const float dw = 26.0f, dh = 28.0f;
-    drawSprite(r, id, p.x + PW / 2 - dw / 2, p.y + PH - dh, dw, dh, p.face < 0);
+    SDL_FRect dst{p.x + PW / 2 - dw / 2, p.y + PH - dh, dw, dh};
+    if (g_jackTex[f]) SDL_RenderTexture(r, g_jackTex[f], nullptr, &dst);
 }
 
 // Pick the sprite + draw box for an enemy based on its kind and phase.
