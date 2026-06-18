@@ -45,7 +45,9 @@
       "Bash(DISPLAY=:1 /tmp/cap)",
       "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/frame.bmp'\\).save\\('/tmp/title.png'\\)\")",
       "Bash(python3 -c \"import json;d=json.load\\(open\\('bombjack-resources/bombjack/colors.json'\\)\\);print\\(list\\(d.keys\\(\\)\\)\\)\")",
-      "Bash(rm -f /tmp/cap /tmp/cap.cpp /tmp/phase*.bmp /tmp/phases.png; echo cleaned)"
+      "Bash(rm -f /tmp/cap /tmp/cap.cpp /tmp/phase*.bmp /tmp/phases.png; echo cleaned)",
+      "Bash(sed -n '/SpriteId enemySprite/,/^}/p' /home/marti/proy/bombjack/src/main.cpp)",
+      "Bash(sed -n '/void drawEnemy/,/^}/p' /home/marti/proy/bombjack/src/main.cpp)"
     ],
     "additionalDirectories": [
       "/tmp",

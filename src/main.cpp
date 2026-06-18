@@ -48,6 +48,7 @@
 #include "banner_png.h"     // the colorful "BOMB JACK" title logo (191x79)
 #include "live_png.h"        // little Jack life icon for the HUD (31x32)
 #include "jack_png.h"        // Jack animation frames (15 x 16x15) from the original
+#include "bird_png.h"        // bird enemy flap frames (9 x 16x16) from the original
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
 
@@ -282,6 +283,9 @@ enum SpriteId {
 
 struct Sprite { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 Sprite g_sprites[SP_COUNT];
+// Per-sprite eye overlays (only the eye pixels), used to pulse enemy eyes red
+// without recolouring the whole body. nullptr for sprites with no eyes.
+SDL_Texture* g_eyeTex[SP_COUNT] = {};
 
 // Jack's animation frames, mirroring the original game (bombjack-resources):
 // an idle pose, a 4-frame walk cycle per direction, and directional flying
@@ -297,6 +301,29 @@ enum JackFrame {
 constexpr int JACK_FW = 16, JACK_FH = 15;     // native frame size in the strip
 constexpr float JACK_WALK_FRAME = 0.125f;     // 0.5s / 4 frames (arcade rate)
 SDL_Texture* g_jackTex[JF_COUNT] = {};
+
+// Bird enemy: a 3-frame wing-flap cycle per heading (left / right / vertical),
+// plus the arcade's pulsing-red recolour (BirdToColors). Frame order matches
+// the embedded bird_png strip.
+enum BirdFrame {
+    BF_LEFT0, BF_LEFT1, BF_LEFT2,
+    BF_RIGHT0, BF_RIGHT1, BF_RIGHT2,
+    BF_VERT0, BF_VERT1, BF_VERT2,
+    BF_COUNT
+};
+constexpr int BIRD_FW = 16, BIRD_FH = 16;
+constexpr float BIRD_FLAP_FRAME = 0.1f;       // 0.3s / 3 frames (arcade rate)
+constexpr float BIRD_PULSE_STEP = 0.06f;      // colour-pulse cadence (arcade rate)
+// Red intensity of the eye pulse, looping bright -> black -> bright (BirdToColors).
+constexpr Uint8 EYE_PULSE[] = {255, 222, 189, 156, 115, 82, 49, 0,
+                               49, 82, 115, 156, 189, 222};
+SDL_Texture* g_birdTex[BF_COUNT] = {};        // bird bodies (natural colours)
+SDL_Texture* g_birdEye[BF_COUNT] = {};        // bird eye overlays
+
+// Current red intensity of the pulsing enemy eyes at time t.
+inline Uint8 eyePulse(float t) {
+    return EYE_PULSE[(int)(t / BIRD_PULSE_STEP) % (int)std::size(EYE_PULSE)];
+}
 
 SDL_Color paletteColor(char c) {
     switch (c) {
@@ -337,6 +364,35 @@ static SDL_Texture* texFromSurface(SDL_Renderer* ren, SDL_Surface* s) {
     return t;
 }
 
+// Build an "eye" overlay from a sprite surface: opaque white wherever the
+// source is pure red (255,0,0) — the eye pixels the arcade recolours — and
+// transparent everywhere else. Returns nullptr if the sprite has no eyes.
+static SDL_Texture* makeEyeMask(SDL_Renderer* ren, SDL_Surface* s) {
+    SDL_Surface* m = SDL_CreateSurface(s->w, s->h, SDL_PIXELFORMAT_RGBA32);
+    bool any = false;
+    for (int y = 0; y < s->h; ++y)
+        for (int x = 0; x < s->w; ++x) {
+            const Uint8* sp = (const Uint8*)s->pixels + y * s->pitch + x * 4;
+            Uint8* mp = (Uint8*)m->pixels + y * m->pitch + x * 4;
+            bool eye = sp[0] == 255 && sp[1] == 0 && sp[2] == 0 && sp[3] == 255;
+            mp[0] = mp[1] = mp[2] = 255;
+            mp[3] = eye ? 255 : 0;
+            any |= eye;
+        }
+    SDL_Texture* t = any ? texFromSurface(ren, m) : nullptr;
+    SDL_DestroySurface(m);
+    return t;
+}
+
+// Draw an arbitrary texture at dst with a colour modulation and optional flip.
+void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
+                   bool flip, Uint8 cr, Uint8 cg, Uint8 cb) {
+    SDL_SetTextureColorMod(tex, cr, cg, cb);
+    SDL_RenderTextureRotated(r, tex, nullptr, &dst, 0.0, nullptr,
+                             flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+    SDL_SetTextureColorMod(tex, 255, 255, 255);
+}
+
 void buildSprites(SDL_Renderer* ren) {
     // Character sprites: crop each from the embedded official sprite sheet.
     struct PackRect { SpriteId id; int x, y, w, h; };
@@ -362,6 +418,9 @@ void buildSprites(SDL_Renderer* ren) {
             SDL_Rect src{pr.x, pr.y, pr.w, pr.h};
             SDL_BlitSurface(sheet, &src, s, nullptr);
             g_sprites[pr.id] = {pr.w, pr.h, texFromSurface(ren, s)};
+            // Mummies (zombies) get pulsing eyes like the bird.
+            if (pr.id == SP_MUMMY || pr.id == SP_MUMMY_WALK || pr.id == SP_MUMMY_FALL)
+                g_eyeTex[pr.id] = makeEyeMask(ren, s);
             SDL_DestroySurface(s);
         }
         SDL_DestroySurface(sheet);
@@ -402,6 +461,27 @@ void buildSprites(SDL_Renderer* ren) {
         stbi_image_free(jpx);
     } else {
         std::fprintf(stderr, "jack sprite decode failed\n");
+    }
+
+    // Bird frames: slice the embedded strip into BF_COUNT cells.
+    int dw = 0, dh = 0, dc = 0;
+    stbi_uc* dpx = stbi_load_from_memory(bird_png, (int)bird_png_len,
+                                         &dw, &dh, &dc, 4);
+    if (dpx) {
+        SDL_Surface* strip =
+            SDL_CreateSurfaceFrom(dw, dh, SDL_PIXELFORMAT_RGBA32, dpx, dw * 4);
+        for (int i = 0; i < BF_COUNT; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(BIRD_FW, BIRD_FH, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{i * BIRD_FW, 0, BIRD_FW, BIRD_FH};
+            SDL_BlitSurface(strip, &src, f, nullptr);
+            g_birdTex[i] = texFromSurface(ren, f);
+            g_birdEye[i] = makeEyeMask(ren, f);
+            SDL_DestroySurface(f);
+        }
+        SDL_DestroySurface(strip);
+        stbi_image_free(dpx);
+    } else {
+        std::fprintf(stderr, "bird sprite decode failed\n");
     }
 }
 
@@ -933,11 +1013,36 @@ SpriteId enemySprite(const Enemy& e, float t, float& w, float& h) {
     }
 }
 
+// The bird flaps through a 3-frame cycle for its current heading. Its body
+// keeps its natural (grey) colours; only the eyes pulse red, mirroring the
+// original (bird.lua). Frozen birds get a blue tint instead.
+void drawBird(SDL_Renderer* r, const Enemy& e, float t, bool frozen) {
+    int step = (int)(t / BIRD_FLAP_FRAME) % 3;
+    int base;
+    if (std::fabs(e.vx) >= std::fabs(e.vy))
+        base = (e.vx < 0) ? BF_LEFT0 : BF_RIGHT0;   // moving horizontally
+    else
+        base = BF_VERT0;                            // moving vertically
+    SDL_Texture* body = g_birdTex[base + step];
+    SDL_Texture* eye  = g_birdEye[base + step];
+    if (!body) return;
+    const float w = 26.0f, h = 24.0f;
+    SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
+    if (frozen) {
+        drawTexTinted(r, body, dst, false, 90, 150, 255);
+        if (eye) drawTexTinted(r, eye, dst, false, 90, 150, 255);
+    } else {
+        drawTexTinted(r, body, dst, false, 255, 255, 255);
+        if (eye) drawTexTinted(r, eye, dst, false, eyePulse(t), 0, 0);
+    }
+}
+
 void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
                float freezeTimer) {
     // Mummies flash white as they pop in; flyers blink as the freeze wears off.
     if (e.phase == EP_APPEAR && std::fmod(t, 0.12f) < 0.06f) return;
     if (frozen && freezeTimer < 1.0f && std::fmod(t, 0.16f) < 0.08f) return;
+    if (e.kind == EK_BIRD) { drawBird(r, e, t, frozen); return; }
     float w, h;
     SpriteId id = enemySprite(e, t, w, h);
     bool flip = e.vx < 0;
@@ -945,6 +1050,12 @@ void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
     if (frozen) SDL_SetTextureColorMod(tex, 90, 150, 255);   // frozen blue tint
     drawSprite(r, id, e.x - w / 2, e.y - h / 2, w, h, flip);
     if (frozen) SDL_SetTextureColorMod(tex, 255, 255, 255);
+    // Mummies (zombies): pulse the eyes red on top of the body.
+    if (g_eyeTex[id]) {
+        SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
+        if (frozen) drawTexTinted(r, g_eyeTex[id], dst, flip, 90, 150, 255);
+        else        drawTexTinted(r, g_eyeTex[id], dst, flip, eyePulse(t), 0, 0);
+    }
 }
 
 // The Power orb: a pulsing, colour-cycling ball. Grab it to freeze the chasers.
