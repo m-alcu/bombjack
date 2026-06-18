@@ -18,11 +18,26 @@ the next, wrapping after the fifth.
 
 ## Gameplay
 
+- Play through **30 hand-authored levels** (then they loop), each with its own
+  platform layout, bomb arrangement and backdrop — including the platform-less
+  "California" stages where you must float to every bomb.
 - Collect **every bomb** in a round to advance to the next, harder round.
 - One bomb always has a **glowing fuse** — grab the lit one to raise your bonus
   multiplier (up to x5). Grabbing an unlit bomb resets the multiplier.
-- Touching a **chaser** costs a life; you respawn with brief invulnerability
-  (you blink). Lose all lives and it's game over.
+- Catching bombs charges the **POWER** gauge (lit bombs charge it faster). When
+  it fills, a colour-cycling **P orb** appears — grab it to **freeze every
+  chaser** for a few seconds.
+- While frozen, touch the chasers to **destroy them** for escalating points
+  (100, 200, 300, 500, 800 …); they blink as the freeze runs out.
+- Beyond the patrolling birds, **mummies** drop in over time, walk and tumble
+  down the platforms, and on reaching the ground **transform** into one of five
+  flying chasers — spheres (home horizontally), orbs (home vertically), clubs
+  (home both ways), horns (constant diagonal drift) and UFOs (dive straight at
+  you). Each level's transform sequence comes from the original game data.
+- Touching a chaser when *not* frozen costs a life; you respawn with brief
+  invulnerability (you blink). Lose all lives and it's game over. (A mummy is
+  harmless while it's still popping in.)
+- Floating score popups show every point gained.
 - Rounds are endless and the chasers get faster and more numerous — chase a high
   score.
 

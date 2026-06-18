@@ -28,7 +28,14 @@
       "Bash(./bombjack --selftest 120)",
       "Bash(env DISPLAY=:1 BJ_DUMP=/tmp/v ./bombjack --rendertest)",
       "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/v_1.bmp'\\).save\\('/tmp/v_playing.png'\\); Image.open\\('/tmp/v_0.bmp'\\).save\\('/tmp/v_title.png'\\); print\\('size',Image.open\\('/tmp/v_1.bmp'\\).size\\)\")",
-      "Bash(./bombjack --selftest 300)"
+      "Bash(./bombjack --selftest 300)",
+      "Bash(./bombjack --selftest 600)",
+      "Bash(env DISPLAY=:1 BJ_DUMP=/tmp/feat ./bombjack --rendertest)",
+      "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/feat_1.bmp'\\).save\\('/tmp/feat.png'\\); print\\('ok'\\)\")",
+      "Bash(env DISPLAY=:1 BJ_LEVELS=/tmp/lvl ./bombjack --rendertest)",
+      "Bash(python3 -c ' *)",
+      "Bash(./bombjack --selftest 1200)",
+      "Bash(env DISPLAY=:1 BJ_MUMMY=/tmp/mum ./bombjack --rendertest)"
     ],
     "additionalDirectories": [
       "/tmp"

@@ -46,6 +46,7 @@
 #pragma GCC diagnostic pop
 #include "screens_png.h"
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
+#include "levels_data.h"    // hand-authored level layouts (from levels.json)
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -58,7 +59,7 @@ constexpr int LOGH = 448;
 // The arcade screen is 224x224. We render the whole world into a 224x224 logical
 // canvas (via a render scale) and present it pixel-doubled to a 448x448 window.
 constexpr int VIEW      = 224;
-constexpr int WIN_SCALE = 2;
+constexpr int WIN_SCALE = 4;
 
 // Player physics — tuned for the floaty Bomb Jack feel.
 constexpr float MOVE        = 170.0f;   // horizontal speed (px/s)
@@ -75,6 +76,17 @@ constexpr float BOMB_R = 7.0f;          // bomb radius
 
 constexpr float INVULN_TIME = 2.0f;     // post-hit invulnerability (s)
 constexpr float CLEAR_TIME  = 1.6f;     // round-clear banner duration (s)
+constexpr float FREEZE_TIME = 5.0f;     // enemy freeze after grabbing the P orb
+constexpr float POWER_NEEDED = 8.0f;    // lit-bomb "charge" needed to spawn a P orb
+
+// Escalating points for each enemy killed during a single freeze (Bomb Jack).
+constexpr int KILL_POINTS[] = {100, 200, 300, 500, 800, 1200, 2000};
+
+// Mummies drop in over time and transform into flying chasers on the ground.
+constexpr float MUMMY_APPEAR_TIME = 1.1f;   // pop-in pause before it moves
+constexpr float MUMMY_SPAWN_DELAY = 3.6f;   // seconds between mummy spawns
+constexpr float MUMMY_WALK_SPEED  = 70.0f;  // platform walk speed (world px/s)
+constexpr float FLY_SPEED         = 120.0f; // base speed of transformed chasers
 
 enum State { TITLE, PLAYING, ROUNDCLEAR, GAMEOVER };
 
@@ -91,17 +103,41 @@ struct Player {
 
 struct Bomb { float x, y; bool collected; };  // x,y = center
 
-struct Enemy { float x, y, vx, vy, r; };
+// Enemy kinds match the level data's transform sequence (see levels_data.h).
+enum EKind  { EK_BIRD, EK_MUMMY, EK_SPHERE, EK_ORB, EK_HORN, EK_CLUB, EK_UFO };
+enum EPhase { EP_FLY, EP_APPEAR, EP_WALK, EP_FALL };  // mummy lifecycle; others fly
+
+struct Enemy {
+    float x, y, vx, vy, r;
+    int   kind   = EK_BIRD;
+    int   phase  = EP_FLY;
+    float timer  = 0.0f;     // appear countdown
+    int   bounces = 0;       // platform direction-changes left before falling
+    int   becomes = EK_SPHERE;  // what this mummy transforms into
+};
+
+struct Popup { float x, y, age = 0.0f; int value = 0; };  // floating score text
 
 struct Game {
     int   state = TITLE;
     int   score = 0, lives = 3, level = 1, streak = 1, bombsLeft = 0;
     float clearTimer = 0.0f;
     float time = 0.0f;                 // animation clock
+    // Power orb / enemy-freeze state.
+    float powerMeter = 0.0f;           // charge from caught bombs; spawns orb at POWER_NEEDED
+    bool  orbActive = false;           // a P orb is on the field
+    float orbX = 0.0f, orbY = 0.0f;
+    float freezeTimer = 0.0f;          // >0 while enemies are frozen & killable
+    int   killCount = 0;               // enemies killed in the current freeze
+    // Mummy spawning.
+    float mummyTimer = 0.0f;           // counts up to MUMMY_SPAWN_DELAY
+    int   mummiesSpawned = 0;          // mummies dropped this round
+    int   transformIdx = 0;            // index into the level's mummy sequence
     Player p{};
     std::vector<SDL_FRect> platforms;
     std::vector<Bomb>      bombs;
     std::vector<Enemy>     enemies;
+    std::vector<Popup>     popups;
     std::mt19937           rng{std::random_device{}()};
 };
 
@@ -214,7 +250,11 @@ void drawTextCentered(SDL_Renderer* r, const char* t, float cx, float y, int s, 
 // ---------------------------------------------------------------------------
 enum SpriteId {
     SP_JACK_STAND, SP_JACK_WALK, SP_JACK_JUMP,
-    SP_BOMB, SP_ENEMY1, SP_ENEMY2, SP_PLAT, SP_COUNT
+    SP_BOMB, SP_ENEMY1, SP_ENEMY2,
+    SP_MUMMY, SP_MUMMY_WALK, SP_MUMMY_FALL,
+    SP_SPHERE1, SP_SPHERE2, SP_ORB1, SP_ORB2, SP_HORN1, SP_HORN2,
+    SP_CLUB1, SP_CLUB2, SP_UFO1, SP_UFO2,
+    SP_PLAT, SP_COUNT
 };
 
 struct Sprite { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
@@ -263,9 +303,16 @@ void buildSprites(SDL_Renderer* ren) {
     // Character sprites: crop each from the embedded official sprite sheet.
     struct PackRect { SpriteId id; int x, y, w, h; };
     static const PackRect packRects[] = {
-        {SP_JACK_STAND, 0, 0, 24, 24}, {SP_JACK_WALK, 24, 0, 24, 24},
-        {SP_JACK_JUMP, 48, 0, 24, 24}, {SP_BOMB, 72, 0, 16, 18},
-        {SP_ENEMY1, 88, 0, 18, 16},    {SP_ENEMY2, 106, 0, 18, 16},
+        {SP_JACK_STAND, 0, 0, 15, 16}, {SP_JACK_WALK, 15, 0, 15, 16},
+        {SP_JACK_JUMP, 30, 0, 15, 16}, {SP_BOMB, 45, 0, 16, 18},
+        {SP_ENEMY1, 61, 0, 18, 16},    {SP_ENEMY2, 79, 0, 18, 16},
+        {SP_MUMMY, 97, 0, 14, 16},     {SP_MUMMY_WALK, 111, 0, 14, 16},
+        {SP_MUMMY_FALL, 125, 0, 14, 16},
+        {SP_SPHERE1, 139, 0, 16, 16},  {SP_SPHERE2, 155, 0, 16, 16},
+        {SP_ORB1, 171, 0, 16, 16},     {SP_ORB2, 187, 0, 16, 16},
+        {SP_HORN1, 203, 0, 16, 16},    {SP_HORN2, 219, 0, 16, 16},
+        {SP_CLUB1, 235, 0, 16, 16},    {SP_CLUB2, 251, 0, 16, 16},
+        {SP_UFO1, 267, 0, 16, 12},     {SP_UFO2, 283, 0, 16, 12},
     };
     int w = 0, h = 0, comp = 0;
     stbi_uc* px = stbi_load_from_memory(spritepack_png, (int)spritepack_png_len,
@@ -333,64 +380,81 @@ void buildBackground(SDL_Renderer* ren) {
 // ---------------------------------------------------------------------------
 // Level / entity setup
 // ---------------------------------------------------------------------------
+constexpr float FLOOR_TOP = 432.0f;       // solid ground at the bottom of the field
+
+// The hand-authored layout for the current round (levels loop after the last).
+const leveldata::Layout& currentLayout(const Game& g) {
+    int idx = (g.level - 1) % leveldata::LEVEL_COUNT;
+    return leveldata::layouts[leveldata::levels[idx].layout];
+}
+
+// Which of the five backdrops the current round's layout calls for.
+int currentScreen(const Game& g) {
+    int idx = (g.level - 1) % leveldata::LEVEL_COUNT;
+    return leveldata::levels[idx].screen;
+}
+
 void initPlatforms(Game& g) {
-    g.platforms = {
-        {0,   430, LOGW, 18},   // floor
-        {54,  348, 132,  12},
-        {326, 348, 132,  12},
-        {190, 262, 132,  12},
-        {40,  176, 118,  12},
-        {354, 176, 118,  12},
-        {198, 96,  116,  12},
-    };
+    g.platforms.clear();
+    g.platforms.push_back({0, FLOOR_TOP, LOGW, LOGH - FLOOR_TOP});   // ground
+    if (currentScreen(g) == 4) return;   // California (screen 5) has no platforms
+    const leveldata::Layout& lay = currentLayout(g);
+    for (int i = 0; i < lay.nplats; ++i) {
+        const leveldata::Plat& p = lay.plats[i];
+        g.platforms.push_back({p.x, p.y, p.w, p.h});
+    }
 }
 
 void spawnBombs(Game& g) {
     g.bombs.clear();
-    for (const SDL_FRect& pl : g.platforms) {
-        bool floor = (pl.w >= LOGW - 1);
-        int n = floor ? 5 : std::clamp((int)(pl.w / 70.0f), 2, 4);
-        for (int i = 0; i < n; ++i) {
-            float t = (n == 1) ? 0.5f : (i + 1.0f) / (n + 1.0f);
-            g.bombs.push_back({pl.x + t * pl.w, pl.y - BOMB_R - 1.0f, false});
-        }
-    }
-    // A few mid-air bombs that demand some gliding to reach.
-    const float air[][2] = {{256, 200}, {118, 122}, {394, 122}, {256, 46}};
-    for (auto& a : air) g.bombs.push_back({a[0], a[1], false});
+    const leveldata::Layout& lay = currentLayout(g);
+    for (int i = 0; i < lay.nbombs; ++i)   // already sorted by lit-up order
+        g.bombs.push_back({lay.bombs[i].x, lay.bombs[i].y, false});
     g.bombsLeft = (int)g.bombs.size();
+}
+
+Enemy makeBird(Game& g, float ang) {
+    std::uniform_real_distribution<float> sign(-1.0f, 1.0f);
+    float speed = std::min(72.0f + g.level * 8.0f, 150.0f);
+    Enemy e;
+    e.kind = EK_BIRD;
+    e.r = 11.0f;
+    e.x = 60.0f + (LOGW - 120.0f) * (0.5f + 0.5f * std::cos(ang));
+    e.y = 70.0f + (LOGH - 160.0f) * (0.5f + 0.5f * std::sin(ang));
+    e.vx = std::cos(ang) * speed + sign(g.rng) * 10.0f;
+    e.vy = std::sin(ang) * speed + sign(g.rng) * 10.0f;
+    return e;
 }
 
 void spawnEnemies(Game& g) {
     g.enemies.clear();
-    int count = std::min(1 + g.level, 4);
-    float speed = std::min(72.0f + g.level * 12.0f, 160.0f);
-    std::uniform_real_distribution<float> sign(-1.0f, 1.0f);
-    for (int i = 0; i < count; ++i) {
-        float ang = (i + 0.5f) / count * 6.2831853f;
-        Enemy e;
-        e.r  = 11.0f;
-        e.x  = 60.0f + i * (LOGW - 120.0f) / std::max(1, count - 1);
-        e.y  = 70.0f + (i % 2) * 40.0f;
-        e.vx = std::cos(ang) * speed + sign(g.rng) * 10.0f;
-        e.vy = std::sin(ang) * speed + sign(g.rng) * 10.0f;
-        g.enemies.push_back(e);
-    }
+    int idx = (g.level - 1) % leveldata::LEVEL_COUNT;
+    int birds = leveldata::levels[idx].birds;
+    for (int i = 0; i < birds; ++i)
+        g.enemies.push_back(makeBird(g, (i + 0.5f) / birds * 6.2831853f));
 }
 
 void resetPlayer(Game& g, bool invuln) {
     g.p.x = LOGW / 2.0f - PW / 2.0f;
-    g.p.y = 430.0f - PH;
+    g.p.y = FLOOR_TOP - PH;
     g.p.vx = g.p.vy = 0.0f;
     g.p.onGround = true;
     g.p.invuln = invuln ? INVULN_TIME : 0.0f;
 }
 
 void startRound(Game& g) {
+    initPlatforms(g);     // load this round's hand-authored layout
     spawnBombs(g);
     spawnEnemies(g);
     resetPlayer(g, true);
     g.streak = 1;
+    g.orbActive = false;
+    g.freezeTimer = 0.0f;
+    g.killCount = 0;
+    g.mummyTimer = 0.0f;
+    g.mummiesSpawned = 0;
+    g.transformIdx = 0;
+    g.popups.clear();
 }
 
 void startGame(Game& g) {
@@ -400,6 +464,122 @@ void startGame(Game& g) {
     g.state = PLAYING;
     initPlatforms(g);
     startRound(g);
+}
+
+// ---------------------------------------------------------------------------
+// Enemies — mummies drop in, walk/fall down the platforms, then transform into
+// one of five flying chasers (Bomb Jack's signature enemy progression).
+// ---------------------------------------------------------------------------
+const leveldata::LevelDef& levelDef(const Game& g) {
+    return leveldata::levels[(g.level - 1) % leveldata::LEVEL_COUNT];
+}
+
+void spawnMummy(Game& g) {
+    const leveldata::LevelDef& L = levelDef(g);
+    const leveldata::Layout& lay = currentLayout(g);
+    Enemy e;
+    e.kind = EK_MUMMY;
+    e.phase = EP_APPEAR;
+    e.timer = MUMMY_APPEAR_TIME;
+    e.r = 10.0f;
+    e.x = lay.mummyx[g.p.x < LOGW / 2 ? 1 : 0];   // drop in away from Jack
+    e.y = 90.0f;
+    e.vx = e.vy = 0.0f;
+    e.bounces = L.bouncing;
+    e.becomes = L.mummies[g.transformIdx % L.nmummies];
+    g.transformIdx++;
+    g.enemies.push_back(e);
+}
+
+void transformMummy(Game& g, Enemy& e) {
+    e.kind = e.becomes;
+    e.phase = EP_FLY;
+    float s = FLY_SPEED + g.level * 2.0f;
+    std::uniform_int_distribution<int> coin(0, 1);
+    float sx = coin(g.rng) ? 1.0f : -1.0f, sy = coin(g.rng) ? 1.0f : -1.0f;
+    switch (e.kind) {
+        case EK_SPHERE: e.vx = 0;          e.vy = sy * s * 0.7f; break;
+        case EK_ORB:    e.vx = sx * s*0.7f; e.vy = 0;            break;
+        case EK_CLUB:   e.vx = sx * s*0.5f; e.vy = sy * s * 0.5f; break;
+        case EK_HORN:   e.vx = sx * s*0.6f; e.vy = sy * s * 0.6f; break;
+        case EK_UFO:    e.vx = e.vy = 0;                          break;
+        default:        e.vx = sx * s*0.5f; e.vy = sy * s * 0.5f; break;
+    }
+    e.y -= 6.0f;   // lift off the ground
+}
+
+// Mummy gravity + platform walk/fall, transforming when it reaches the ground.
+void updateMummy(Game& g, Enemy& e, float dt) {
+    if (e.phase == EP_APPEAR) {
+        e.timer -= dt;
+        if (e.timer <= 0) {
+            e.phase = EP_WALK;
+            e.vx = (e.x < LOGW / 2) ? MUMMY_WALK_SPEED : -MUMMY_WALK_SPEED;
+        }
+        return;
+    }
+    const float halfH = 14.0f, halfW = 8.0f;
+    e.vy += GRAVITY * dt;
+    if (e.vy > MAXFALL) e.vy = MAXFALL;
+    float feetOld = e.y + halfH;
+    e.y += e.vy * dt;
+    float feet = e.y + halfH;
+    if (e.vy >= 0) {                                   // land on a platform top
+        for (const SDL_FRect& pl : g.platforms)
+            if (e.x > pl.x && e.x < pl.x + pl.w && feetOld <= pl.y + 1 && feet >= pl.y) {
+                e.y = pl.y - halfH; e.vy = 0;
+                if (pl.y < FLOOR_TOP - 1) e.bounces = levelDef(g).bouncing;
+                break;
+            }
+    }
+    const SDL_FRect* ground = nullptr;                 // platform we now stand on
+    for (const SDL_FRect& pl : g.platforms)
+        if (e.x > pl.x && e.x < pl.x + pl.w && std::fabs((e.y + halfH) - pl.y) < 2.0f) {
+            ground = &pl; break;
+        }
+    if (!ground) { e.phase = EP_FALL; return; }
+    if (ground->y >= FLOOR_TOP - 1.0f) { transformMummy(g, e); return; }  // hit the floor
+    e.phase = EP_WALK;
+    if (e.vx == 0) e.vx = MUMMY_WALK_SPEED;
+    e.x += e.vx * dt;
+    e.x = std::clamp(e.x, e.r, LOGW - e.r);
+    float ahead = e.x + (e.vx > 0 ? halfW : -halfW);   // ground under the leading foot?
+    if (ahead <= ground->x || ahead >= ground->x + ground->w) {
+        if (e.bounces > 0) { e.vx = -e.vx; e.bounces--; }
+        else { e.phase = EP_FALL; e.x += (e.vx > 0 ? 2.0f : -2.0f); }
+    }
+}
+
+// Transformed chasers: each kind flies and bounces off the walls differently.
+void updateFlyer(Game& g, Enemy& e, float dt, float pcx, float pcy) {
+    float s = FLY_SPEED + g.level * 2.0f;
+    switch (e.kind) {
+        case EK_BIRD: {                                // gentle homing, constant speed
+            float dx = pcx - e.x, dy = pcy - e.y, len = std::sqrt(dx*dx + dy*dy) + 1e-3f;
+            float spd = std::sqrt(e.vx*e.vx + e.vy*e.vy) + 1e-3f;
+            e.vx += dx/len * 40*dt; e.vy += dy/len * 40*dt;
+            float n = std::sqrt(e.vx*e.vx + e.vy*e.vy);
+            e.vx = e.vx/n*spd; e.vy = e.vy/n*spd; break;
+        }
+        case EK_SPHERE:                                // homes on X, bounces on Y
+            e.vx = std::clamp(e.vx + (pcx > e.x ? 1 : -1) * s*2*dt, -s*0.7f, s*0.7f); break;
+        case EK_ORB:                                   // homes on Y, bounces on X
+            e.vy = std::clamp(e.vy + (pcy > e.y ? 1 : -1) * s*2*dt, -s*0.7f, s*0.7f); break;
+        case EK_CLUB:                                  // homes on both axes
+            e.vx = std::clamp(e.vx + (pcx > e.x ? 1 : -1) * s*1.5f*dt, -s*0.6f, s*0.6f);
+            e.vy = std::clamp(e.vy + (pcy > e.y ? 1 : -1) * s*1.5f*dt, -s*0.6f, s*0.6f); break;
+        case EK_HORN: break;                           // constant diagonal drift
+        case EK_UFO: {                                 // straight at Jack, slowing when near
+            float dx = pcx - e.x, dy = pcy - e.y, len = std::sqrt(dx*dx + dy*dy) + 1e-3f;
+            float k = (len < 70 ? 0.4f : 1.0f) * s;
+            e.vx = dx/len * k; e.vy = dy/len * k; break;
+        }
+    }
+    e.x += e.vx * dt; e.y += e.vy * dt;
+    if (e.x < e.r)        { e.x = e.r;        e.vx = std::fabs(e.vx); }
+    if (e.x > LOGW - e.r) { e.x = LOGW - e.r; e.vx = -std::fabs(e.vx); }
+    if (e.y < e.r)        { e.y = e.r;        e.vy = std::fabs(e.vy); }
+    if (e.y > LOGH - e.r) { e.y = LOGH - e.r; e.vy = -std::fabs(e.vy); }
 }
 
 // ---------------------------------------------------------------------------
@@ -462,14 +642,45 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             b.y > p.y - BOMB_R && b.y < p.y + PH + BOMB_R) {
             b.collected = true;
             g.bombsLeft--;
-            if (i == lit) {
+            int gain;
+            if (i == lit) {                       // grabbed the lit one, in sequence
                 g.streak = std::min(g.streak + 1, 5);
-                g.score += 100 * g.streak;
+                gain = 100 * g.streak;
+                g.powerMeter += 1.0f;             // lit bombs charge the P orb faster
             } else {
                 g.streak = 1;
-                g.score += 100;
+                gain = 100;
+                g.powerMeter += 0.5f;
+            }
+            g.score += gain;
+            g.popups.push_back({b.x, b.y - 6, 0.0f, gain});
+            // Enough charge spawns a Power orb (once, while none is active).
+            if (!g.orbActive && g.freezeTimer <= 0 && g.powerMeter >= POWER_NEEDED) {
+                g.powerMeter -= POWER_NEEDED;
+                g.orbActive = true;
+                g.orbX = b.x;
+                g.orbY = b.y - 18.0f;             // float just above the grabbed bomb
             }
         }
+    }
+
+    // Power orb pickup -> freeze every enemy and make them killable for a while.
+    if (g.orbActive) {
+        if (g.orbX > p.x - 10 && g.orbX < p.x + PW + 10 &&
+            g.orbY > p.y - 10 && g.orbY < p.y + PH + 10) {
+            g.orbActive = false;
+            g.freezeTimer = FREEZE_TIME;
+            g.killCount = 0;
+            g.score += 1000 * g.streak;
+            g.popups.push_back({g.orbX, g.orbY, 0.0f, 1000 * g.streak});
+        }
+    }
+
+    // Age out floating score popups.
+    for (auto it = g.popups.begin(); it != g.popups.end();) {
+        it->age += dt;
+        it->y -= 18.0f * dt;
+        if (it->age > 1.0f) it = g.popups.erase(it); else ++it;
     }
 
     if (g.bombsLeft <= 0) {
@@ -479,36 +690,50 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         return;
     }
 
-    // Enemies: drift, bounce off the screen edges, gently home in.
-    float pcx = p.x + PW / 2, pcy = p.y + PH / 2;
-    for (Enemy& e : g.enemies) {
-        float dx = pcx - e.x, dy = pcy - e.y;
-        float len = std::sqrt(dx * dx + dy * dy) + 1e-3f;
-        float spd = std::sqrt(e.vx * e.vx + e.vy * e.vy) + 1e-3f;
-        e.vx += (dx / len) * 40.0f * dt;
-        e.vy += (dy / len) * 40.0f * dt;
-        float nspd = std::sqrt(e.vx * e.vx + e.vy * e.vy);
-        e.vx = e.vx / nspd * spd;     // keep speed constant
-        e.vy = e.vy / nspd * spd;
-        e.x += e.vx * dt;
-        e.y += e.vy * dt;
-        if (e.x < e.r)         { e.x = e.r;         e.vx = std::fabs(e.vx); }
-        if (e.x > LOGW - e.r)  { e.x = LOGW - e.r;  e.vx = -std::fabs(e.vx); }
-        if (e.y < e.r)         { e.y = e.r;         e.vy = std::fabs(e.vy); }
-        if (e.y > LOGH - e.r)  { e.y = LOGH - e.r;  e.vy = -std::fabs(e.vy); }
+    // While frozen, enemies hold still and any touch kills them for points.
+    const bool frozen = g.freezeTimer > 0.0f;
+    if (frozen) g.freezeTimer -= dt;
 
-        if (p.invuln <= 0) {
-            float ex = pcx - e.x, ey = pcy - e.y;
-            if (ex * ex + ey * ey < (e.r + 9.0f) * (e.r + 9.0f)) {
-                g.lives--;
-                if (g.lives <= 0) {
-                    g.state = GAMEOVER;
-                } else {
-                    resetPlayer(g, true);
-                }
-                return;
-            }
+    // Drop a fresh mummy in every so often, up to this level's quota.
+    if (!frozen) {
+        const leveldata::LevelDef& L = levelDef(g);
+        g.mummyTimer += dt;
+        if (g.mummyTimer >= MUMMY_SPAWN_DELAY && g.mummiesSpawned < L.nmummies) {
+            g.mummyTimer = 0.0f;
+            g.mummiesSpawned++;
+            spawnMummy(g);
         }
+    }
+
+    float pcx = p.x + PW / 2, pcy = p.y + PH / 2;
+    for (auto it = g.enemies.begin(); it != g.enemies.end();) {
+        Enemy& e = *it;
+        if (!frozen) {
+            if (e.kind == EK_MUMMY) updateMummy(g, e, dt);
+            else                    updateFlyer(g, e, dt, pcx, pcy);
+        }
+
+        if (e.phase == EP_APPEAR) { ++it; continue; }   // intangible while popping in
+
+        float ex = pcx - e.x, ey = pcy - e.y;
+        bool touching = ex * ex + ey * ey < (e.r + 9.0f) * (e.r + 9.0f);
+        if (frozen) {
+            if (touching) {                             // kill the frozen chaser
+                int idx = std::min(g.killCount, (int)(std::size(KILL_POINTS)) - 1);
+                int gain = KILL_POINTS[idx] * g.streak;
+                g.score += gain;
+                g.popups.push_back({e.x, e.y - 6, 0.0f, gain});
+                g.killCount++;
+                it = g.enemies.erase(it);
+                continue;
+            }
+        } else if (p.invuln <= 0 && touching) {
+            g.lives--;
+            if (g.lives <= 0) g.state = GAMEOVER;
+            else resetPlayer(g, true);
+            return;
+        }
+        ++it;
     }
 }
 
@@ -538,12 +763,14 @@ void update(Game& g, const Input& in, float dt) {
 // Rendering
 // ---------------------------------------------------------------------------
 void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
-    // Sprite is 12x14; draw it centred on the bomb (radius 7 -> ~16x18 box).
-    drawSprite(r, SP_BOMB, b.x - 8, b.y - 9, 16, 18, false);
+    // Drawn larger than the collision radius, centred on the bomb, so it reads
+    // at a similar scale to Jack and the chasers.
+    const float dw = 24.0f, dh = 27.0f;
+    drawSprite(r, SP_BOMB, b.x - dw / 2, b.y - dh / 2, dw, dh, false);
     if (lit) {                                       // animated fuse spark
         bool flick = std::fmod(t, 0.2f) < 0.1f;
         setCol(r, flick ? Color{255, 230, 90} : Color{255, 150, 40});
-        fillCircle(r, b.x + 1, b.y - 11, flick ? 3.0f : 2.0f);
+        fillCircle(r, b.x + 1, b.y - dh / 2 - 2, flick ? 4.0f : 3.0f);
     }
 }
 
@@ -556,20 +783,62 @@ void drawPlayer(SDL_Renderer* r, const Player& p, float t) {
         id = (std::fmod(t, 0.2f) < 0.1f) ? SP_JACK_WALK : SP_JACK_STAND;
     else
         id = SP_JACK_STAND;
-    drawSprite(r, id, p.x - 2, p.y, PW + 4, PH, p.face < 0);
+    // Draw bigger than the collision box (feet anchored to its bottom) so Jack
+    // reads at a similar scale to the bombs and chasers.
+    const float dw = 26.0f, dh = 28.0f;
+    drawSprite(r, id, p.x + PW / 2 - dw / 2, p.y + PH - dh, dw, dh, p.face < 0);
 }
 
-void drawEnemy(SDL_Renderer* r, const Enemy& e, float t) {
-    SpriteId id = (std::fmod(t, 0.3f) < 0.15f) ? SP_ENEMY1 : SP_ENEMY2;
-    drawSprite(r, id, e.x - 14, e.y - 12, 28, 24, e.vx < 0);
+// Pick the sprite + draw box for an enemy based on its kind and phase.
+SpriteId enemySprite(const Enemy& e, float t, float& w, float& h) {
+    bool a = std::fmod(t, 0.3f) < 0.15f;       // 2-frame animation toggle
+    w = 28; h = 24;
+    switch (e.kind) {
+        case EK_MUMMY:
+            w = 26; h = 28;
+            if (e.phase == EP_FALL) return SP_MUMMY_FALL;
+            if (e.phase == EP_WALK) return a ? SP_MUMMY_WALK : SP_MUMMY;
+            return SP_MUMMY;                    // appearing / idle
+        case EK_SPHERE: w = h = 26; return a ? SP_SPHERE1 : SP_SPHERE2;
+        case EK_ORB:    w = h = 26; return a ? SP_ORB1 : SP_ORB2;
+        case EK_HORN:   w = h = 26; return a ? SP_HORN1 : SP_HORN2;
+        case EK_CLUB:   w = h = 26; return a ? SP_CLUB1 : SP_CLUB2;
+        case EK_UFO:    w = 28; h = 20; return a ? SP_UFO1 : SP_UFO2;
+        default:        return a ? SP_ENEMY1 : SP_ENEMY2;   // bird
+    }
 }
 
-// Night-sky backdrop with a crescent moon and Egyptian pyramids (round 1 vibe).
-void drawBackground(SDL_Renderer* r, int level) {
+void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
+               float freezeTimer) {
+    // Mummies flash white as they pop in; flyers blink as the freeze wears off.
+    if (e.phase == EP_APPEAR && std::fmod(t, 0.12f) < 0.06f) return;
+    if (frozen && freezeTimer < 1.0f && std::fmod(t, 0.16f) < 0.08f) return;
+    float w, h;
+    SpriteId id = enemySprite(e, t, w, h);
+    bool flip = e.vx < 0;
+    SDL_Texture* tex = g_sprites[id].tex;
+    if (frozen) SDL_SetTextureColorMod(tex, 90, 150, 255);   // frozen blue tint
+    drawSprite(r, id, e.x - w / 2, e.y - h / 2, w, h, flip);
+    if (frozen) SDL_SetTextureColorMod(tex, 255, 255, 255);
+}
+
+// The Power orb: a pulsing, colour-cycling ball. Grab it to freeze the chasers.
+void drawPowerOrb(SDL_Renderer* r, float x, float y, float t) {
+    static const Color cyc[] = {{255, 80, 80}, {255, 200, 60}, {120, 255, 120},
+                                {90, 160, 255}, {220, 90, 230}};
+    int k = (int)(t * 8) % 5;
+    float rad = 10.0f + std::sin(t * 12.0f) * 1.5f;
+    setCol(r, cyc[k]);             fillCircle(r, x, y, rad);
+    setCol(r, {255, 255, 255});    fillCircle(r, x, y, rad * 0.5f);
+    drawTextCentered(r, "P", x, y - 3, 1, cyc[k]);
+}
+
+// Draw the backdrop the current level's layout calls for (screen is 0-based).
+void drawBackground(SDL_Renderer* r, int screen) {
     setCol(r, {18, 16, 38});
     SDL_RenderClear(r);
     if (g_bgTex && g_bgCount > 0) {
-        int idx = (level - 1) % g_bgCount;          // round 1 -> first backdrop
+        int idx = screen % g_bgCount;
         if (idx < 0) idx += g_bgCount;
         SDL_FRect src{(float)(idx * BG_W), 0, (float)BG_W, (float)BG_H};
         SDL_FRect dst{0, 0, (float)LOGW, (float)LOGH};
@@ -578,7 +847,7 @@ void drawBackground(SDL_Renderer* r, int level) {
 }
 
 void render(SDL_Renderer* r, const Game& g) {
-    drawBackground(r, g.level);
+    drawBackground(r, currentScreen(g));
 
     if (g.state == TITLE) {
         drawSprite(r, SP_JACK_STAND, LOGW / 2.0f - 40, 70, 80, 80, false);
@@ -602,8 +871,18 @@ void render(SDL_Renderer* r, const Game& g) {
     for (int i = 0; i < (int)g.bombs.size(); ++i)
         if (!g.bombs[i].collected) drawBomb(r, g.bombs[i], i == lit, g.time);
 
-    for (const Enemy& e : g.enemies) drawEnemy(r, e, g.time);
+    if (g.orbActive) drawPowerOrb(r, g.orbX, g.orbY, g.time);
+
+    bool frozen = g.freezeTimer > 0.0f;
+    for (const Enemy& e : g.enemies) drawEnemy(r, e, g.time, frozen, g.freezeTimer);
     drawPlayer(r, g.p, g.time);
+
+    // Floating score popups (kills, bombs, power).
+    for (const Popup& pp : g.popups) {
+        char sb[16];
+        std::snprintf(sb, sizeof(sb), "%d", pp.value);
+        drawTextCentered(r, sb, pp.x, pp.y, 1, {255, 240, 140});
+    }
 
     // HUD.
     char buf[64];
@@ -616,6 +895,13 @@ void render(SDL_Renderer* r, const Game& g) {
     if (g.streak > 1) {
         std::snprintf(buf, sizeof(buf), "BONUS X%d", g.streak);
         drawText(r, buf, 8, 26, 1, {255, 230, 120});
+    }
+    // POWER charge gauge — fills as bombs are caught; a full bar spawns a P orb.
+    {
+        float frac = std::min(g.powerMeter / POWER_NEEDED, 1.0f);
+        drawText(r, "POWER", 8, 38, 1, {180, 200, 255});
+        setCol(r, {40, 40, 70});       fillR(r, 44, 38, 60, 6);
+        setCol(r, {120, 200, 255});    fillR(r, 44, 38, 60 * frac, 6);
     }
 
     if (g.state == ROUNDCLEAR) {
