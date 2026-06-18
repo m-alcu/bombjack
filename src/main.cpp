@@ -46,6 +46,7 @@
 #pragma GCC diagnostic pop
 #include "screens_png.h"
 #include "banner_png.h"     // the colorful "BOMB JACK" title logo (191x79)
+#include "live_png.h"        // little Jack life icon for the HUD (31x32)
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
 
@@ -392,6 +393,10 @@ constexpr int BANNER_PHASES = 3;
 constexpr float BANNER_ROT = 0.05f;   // seconds per rotation step (arcade rate)
 SDL_Texture* g_bannerTex[BANNER_PHASES] = {};
 
+// Jack life icon (31x32, black colour-keyed to transparent) shown in the HUD.
+constexpr int LIVE_W = 31, LIVE_H = 32;
+SDL_Texture* g_liveTex = nullptr;
+
 void buildBackground(SDL_Renderer* ren) {
     int w = 0, h = 0, comp = 0;
     stbi_uc* px = stbi_load_from_memory(screens_png, (int)screens_png_len,
@@ -424,7 +429,7 @@ void buildBackground(SDL_Renderer* ren) {
             for (int i = 0; i < BANNER_PHASES; ++i)
                 if (buf[p] == blues[i][0] && buf[p + 1] == blues[i][1] &&
                     buf[p + 2] == blues[i][2]) {
-                    const Uint8* c = blues[(i + phase) % BANNER_PHASES];
+                    const Uint8* c = blues[(i + BANNER_PHASES - phase) % BANNER_PHASES];
                     buf[p] = c[0]; buf[p + 1] = c[1]; buf[p + 2] = c[2];
                     break;
                 }
@@ -436,6 +441,21 @@ void buildBackground(SDL_Renderer* ren) {
         SDL_DestroySurface(bs);
     }
     stbi_image_free(bpx);
+
+    // Jack life icon.
+    int lw = 0, lh = 0, lc = 0;
+    stbi_uc* lpx = stbi_load_from_memory(live_png, (int)live_png_len,
+                                         &lw, &lh, &lc, 4);
+    if (lpx) {
+        SDL_Surface* ls = SDL_CreateSurfaceFrom(lw, lh, SDL_PIXELFORMAT_RGBA32,
+                                                lpx, lw * 4);
+        g_liveTex = SDL_CreateTextureFromSurface(ren, ls);
+        SDL_SetTextureScaleMode(g_liveTex, SDL_SCALEMODE_NEAREST);
+        SDL_DestroySurface(ls);
+        stbi_image_free(lpx);
+    } else {
+        std::fprintf(stderr, "life icon decode failed\n");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -907,35 +927,47 @@ void drawBackground(SDL_Renderer* r, int screen) {
     }
 }
 
-// HUD strips drawn in raw screen pixels (224 wide, 16 tall each). Mirrors the
-// arcade layout: score and lives up top; round and the power gauge below.
+// HUD strips drawn in raw screen pixels (224 wide, 16 tall each). Top strip:
+// running score (left) and the power gauge (right). Bottom strip mirrors the
+// arcade: Jack life icons in the bottom-left, then ROUND / -N- and HI-SCORE /
+// score (both two-line, centered) toward the right.
 void drawHud(SDL_Renderer* r, const Game& g) {
     char buf[64];
     setCol(r, {0, 0, 0});
     fillR(r, 0, 0, SCREEN_W, HUD_H);                 // top strip
     fillR(r, 0, HUD_H + GAME_H, SCREEN_W, HUD_H);    // bottom strip
 
-    // Top strip.
+    // --- Top strip: running score (left) + power gauge (right). ---
     std::snprintf(buf, sizeof(buf), "SCORE %06d", g.score);
     drawText(r, buf, 3, 1, 2, {255, 255, 255});
-    std::snprintf(buf, sizeof(buf), "X%d", g.lives);
-    drawText(r, buf, SCREEN_W - textWidth(buf, 2) - 3, 1, 2, {255, 180, 180});
-
-    // Bottom strip.
-    const float by = HUD_H + GAME_H + 1;             // 241
-    std::snprintf(buf, sizeof(buf), "ROUND %d", g.level);
-    drawText(r, buf, 3, by, 2, {200, 220, 255});
-    if (g.streak > 1) {
-        std::snprintf(buf, sizeof(buf), "BONUS X%d", g.streak);
-        drawTextCentered(r, buf, SCREEN_W / 2.0f, by + 3, 1, {255, 230, 120});
-    }
-    // POWER gauge — fills as bombs are caught; a full bar spawns a P orb.
     {
+        // POWER gauge — fills as bombs are caught; a full bar spawns a P orb.
         float frac = std::min(g.powerMeter / POWER_NEEDED, 1.0f);
-        const float gx = SCREEN_W - 64;              // 160
-        setCol(r, {40, 40, 70});    fillR(r, gx, by + 4, 60, 6);
-        setCol(r, {120, 200, 255}); fillR(r, gx, by + 4, 60 * frac, 6);
+        const float gx = SCREEN_W - 64;
+        setCol(r, {40, 40, 70});    fillR(r, gx, 5, 60, 6);
+        setCol(r, {120, 200, 255}); fillR(r, gx, 5, 60 * frac, 6);
     }
+
+    // --- Bottom strip. ---
+    const float top = HUD_H + GAME_H;                // 240
+    const float l1 = top, l2 = top + 8;              // two stacked text rows
+
+    // Lives: up to 7 Jack icons in the bottom-left corner.
+    int shown = std::min(g.lives, 7);
+    for (int i = 0; i < shown; ++i) {
+        SDL_FRect dst{2.0f + i * 15.0f, top + 1, (float)LIVE_W * 14 / LIVE_H, 14};
+        if (g_liveTex) SDL_RenderTexture(r, g_liveTex, nullptr, &dst);
+    }
+
+    // ROUND (green) over -N- (white), centered just right of the life icons.
+    drawTextCentered(r, "ROUND", 132, l1, 1, {80, 230, 90});
+    std::snprintf(buf, sizeof(buf), "-%d-", g.level);
+    drawTextCentered(r, buf, 132, l2, 1, {255, 255, 255});
+
+    // HI-SCORE (yellow) over the current score (white), at the right.
+    drawTextCentered(r, "HI-SCORE", 192, l1, 1, {255, 230, 60});
+    std::snprintf(buf, sizeof(buf), "%06d", g.score);
+    drawTextCentered(r, buf, 192, l2, 1, {255, 255, 255});
 }
 
 void render(SDL_Renderer* r, const Game& g) {
