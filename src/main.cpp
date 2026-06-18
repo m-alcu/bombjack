@@ -847,21 +847,26 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     p.vy += grav * dt;
     if (p.vy > MAXFALL) p.vy = MAXFALL;
 
+    float oldTop = p.y;
     float oldBottom = p.y + PH;
     p.y += p.vy * dt;
     if (p.y < 0) { p.y = 0; if (p.vy < 0) p.vy = 0; }
 
-    // One-way platforms: land only when descending onto the top edge.
+    // Solid platforms: collide with both top and bottom faces.
     p.onGround = false;
-    if (p.vy >= 0) {
-        for (const SDL_FRect& pl : g.platforms) {
-            bool overlapX = (p.x + PW - 3 > pl.x) && (p.x + 3 < pl.x + pl.w);
-            if (overlapX && oldBottom <= pl.y + 1.0f && p.y + PH >= pl.y) {
+    for (const SDL_FRect& pl : g.platforms) {
+        bool overlapX = (p.x + PW - 3 > pl.x) && (p.x + 3 < pl.x + pl.w);
+        if (!overlapX) continue;
+        if (p.vy >= 0 && oldBottom <= pl.y + 1.0f && p.y + PH >= pl.y) {
                 p.y = pl.y - PH;
                 p.vy = 0;
                 p.onGround = true;
                 break;
-            }
+        }
+        if (p.vy < 0 && oldTop >= pl.y + pl.h - 1.0f && p.y <= pl.y + pl.h) {
+            p.y = pl.y + pl.h;
+            p.vy = 0;
+            break;
         }
     }
 
