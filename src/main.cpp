@@ -74,7 +74,7 @@ constexpr int WIN_SCALE = 4;
 
 // Player physics — tuned for the floaty Bomb Jack feel.
 constexpr float MOVE        = 170.0f;   // horizontal speed (px/s)
-constexpr float JUMP_VEL    = -355.0f;  // initial jump velocity
+constexpr float JUMP_VEL    = -630.0f;  // initial jump velocity (stronger jump)
 constexpr float FLUTTER     = 165.0f;   // upward kick from an in-air tap
 constexpr float FLUTTER_MIN = -200.0f;  // cap on upward speed from fluttering
 constexpr float GRAVITY     = 980.0f;
@@ -83,15 +83,21 @@ constexpr float MAXFALL     = 520.0f;
 
 constexpr float PW = 18.0f;             // player size
 constexpr float PH = 24.0f;
-constexpr float BOMB_R = 7.0f;          // bomb radius
+// Bombs are 12x16 in the original 224x224 playfield.
+constexpr float BOMB_HALF_W = 6.0f * (float)LOGW / (float)GAME_W;
+constexpr float BOMB_HALF_H = 8.0f * (float)LOGH / (float)GAME_H;
 
 constexpr float INVULN_TIME = 2.0f;     // post-hit invulnerability (s)
 constexpr float CLEAR_TIME  = 1.6f;     // round-clear banner duration (s)
 constexpr float FREEZE_TIME = 5.0f;     // enemy freeze after grabbing the P orb
 constexpr float POWER_NEEDED = 8.0f;    // lit-bomb "charge" needed to spawn a P orb
+constexpr float ORB_SPEED = 60.0f;      // moving Power orb speed (world px/s)
+constexpr float ORB_R = 10.0f;          // Power orb collision / bounce radius
 
 // Escalating points for each enemy killed during a single freeze (Bomb Jack).
 constexpr int KILL_POINTS[] = {100, 200, 300, 500, 800, 1200, 2000};
+// Original Power orb score tiers (indexed by orb colour family).
+constexpr int POWER_POINTS[] = {100, 200, 300, 500, 800, 1200, 2000};
 
 // Mummies drop in over time and transform into flying chasers on the ground.
 constexpr float MUMMY_APPEAR_TIME = 1.1f;   // pop-in pause before it moves
@@ -138,6 +144,8 @@ struct Game {
     float powerMeter = 0.0f;           // charge from caught bombs; spawns orb at POWER_NEEDED
     bool  orbActive = false;           // a P orb is on the field
     float orbX = 0.0f, orbY = 0.0f;
+    float orbVx = 0.0f, orbVy = 0.0f;
+    int   orbFamily = 0;               // 0..6 PowerToColors family index
     float freezeTimer = 0.0f;          // >0 while enemies are frozen & killable
     int   killCount = 0;               // enemies killed in the current freeze
     // Mummy spawning.
@@ -813,6 +821,8 @@ void updateFlyer(Game& g, Enemy& e, float dt, float pcx, float pcy) {
 void updatePlaying(Game& g, const Input& in, float dt) {
     Player& p = g.p;
     if (p.invuln > 0) p.invuln -= dt;
+    const bool oldOnGround = p.onGround;
+    const float oldVy = p.vy;
 
     // Horizontal movement.
     p.vx = (in.right ? MOVE : 0.0f) - (in.left ? MOVE : 0.0f);
@@ -863,8 +873,8 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     for (int i = 0; i < (int)g.bombs.size(); ++i) {
         Bomb& b = g.bombs[i];
         if (b.collected) continue;
-        if (b.x > p.x - BOMB_R && b.x < p.x + PW + BOMB_R &&
-            b.y > p.y - BOMB_R && b.y < p.y + PH + BOMB_R) {
+        if (b.x > p.x - BOMB_HALF_W && b.x < p.x + PW + BOMB_HALF_W &&
+            b.y > p.y - BOMB_HALF_H && b.y < p.y + PH + BOMB_HALF_H) {
             b.collected = true;
             g.bombsLeft--;
             int gain;
@@ -885,19 +895,95 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 g.orbActive = true;
                 g.orbX = b.x;
                 g.orbY = b.y - 18.0f;             // float just above the grabbed bomb
+                g.orbVx = ORB_SPEED * 0.5f;
+                g.orbVy = ORB_SPEED * 0.8660254f;
+                g.orbFamily = 0;
             }
         }
     }
 
+    // Like the original, the orb changes colour family on player actions.
+    if (g.orbActive) {
+        float oldOrbX = g.orbX;
+        float oldOrbY = g.orbY;
+        g.orbX += g.orbVx * dt;
+        g.orbY += g.orbVy * dt;
+        if (g.orbX < ORB_R) { g.orbX = ORB_R; g.orbVx = std::fabs(g.orbVx); }
+        if (g.orbX > LOGW - ORB_R) {
+            g.orbX = LOGW - ORB_R;
+            g.orbVx = -std::fabs(g.orbVx);
+        }
+        if (g.orbY < ORB_R) { g.orbY = ORB_R; g.orbVy = std::fabs(g.orbVy); }
+        if (g.orbY > FLOOR_TOP - ORB_R) {
+            g.orbY = FLOOR_TOP - ORB_R;
+            g.orbVy = -std::fabs(g.orbVy);
+        }
+
+        // Bounce on platform faces (excluding the ground platform handled above).
+        for (const SDL_FRect& pl : g.platforms) {
+            if (pl.y >= FLOOR_TOP - 1.0f) continue;
+            bool overlapX = g.orbX + ORB_R > pl.x && g.orbX - ORB_R < pl.x + pl.w;
+            bool overlapY = g.orbY + ORB_R > pl.y && g.orbY - ORB_R < pl.y + pl.h;
+            if (!overlapX || !overlapY) continue;
+
+            // Match the Lua collision feel: resolve vertical faces first, then sides.
+            const float eps = 0.001f;
+            bool hitTop = oldOrbY + ORB_R <= pl.y + eps && g.orbY + ORB_R > pl.y + eps;
+            bool hitBottom = oldOrbY - ORB_R >= pl.y + pl.h - eps &&
+                             g.orbY - ORB_R < pl.y + pl.h - eps;
+            if (hitTop) {
+                g.orbY = pl.y - ORB_R;
+                g.orbVy = -std::fabs(g.orbVy);
+            } else if (hitBottom) {
+                g.orbY = pl.y + pl.h + ORB_R;
+                g.orbVy = std::fabs(g.orbVy);
+            } else {
+                bool hitLeft = oldOrbX + ORB_R <= pl.x + eps && g.orbX + ORB_R > pl.x + eps;
+                bool hitRight = oldOrbX - ORB_R >= pl.x + pl.w - eps &&
+                                g.orbX - ORB_R < pl.x + pl.w - eps;
+                if (hitLeft) {
+                    g.orbX = pl.x - ORB_R;
+                    g.orbVx = -std::fabs(g.orbVx);
+                } else if (hitRight) {
+                    g.orbX = pl.x + pl.w + ORB_R;
+                    g.orbVx = std::fabs(g.orbVx);
+                } else if (std::fabs(g.orbVy) >= std::fabs(g.orbVx) && oldOrbY <= pl.y) {
+                    // Corner/large-step overlap: allow vertical correction only
+                    // for top-face contacts. Bottom-face bounce is crossing-only.
+                    g.orbY = pl.y - ORB_R;
+                    g.orbVy = -std::fabs(g.orbVy);
+                } else {
+                    // Fallback to horizontal correction to avoid false underside bounces.
+                    if (oldOrbX <= pl.x) {
+                        g.orbX = pl.x - ORB_R;
+                        g.orbVx = -std::fabs(g.orbVx);
+                    } else {
+                        g.orbX = pl.x + pl.w + ORB_R;
+                        g.orbVx = std::fabs(g.orbVx);
+                    }
+                }
+            }
+            break;
+        }
+
+        bool stepFamily = in.jumpPressed;
+        if (!oldOnGround && p.onGround) stepFamily = true;           // touched platform
+        if (oldVy <= 0.0f && p.vy > 0.0f && !p.onGround) stepFamily = true;  // started falling
+        if (stepFamily) g.orbFamily = (g.orbFamily + 1) % 7;
+    }
+
     // Power orb pickup -> freeze every enemy and make them killable for a while.
     if (g.orbActive) {
-        if (g.orbX > p.x - 10 && g.orbX < p.x + PW + 10 &&
-            g.orbY > p.y - 10 && g.orbY < p.y + PH + 10) {
+        if (g.orbX > p.x - ORB_R && g.orbX < p.x + PW + ORB_R &&
+            g.orbY > p.y - ORB_R && g.orbY < p.y + PH + ORB_R) {
             g.orbActive = false;
             g.freezeTimer = FREEZE_TIME;
             g.killCount = 0;
-            g.score += 1000 * g.streak;
-            g.popups.push_back({g.orbX, g.orbY, 0.0f, 1000 * g.streak});
+            int idx = (g.orbFamily % (int)std::size(POWER_POINTS) +
+                       (int)std::size(POWER_POINTS)) % (int)std::size(POWER_POINTS);
+            int gain = POWER_POINTS[idx];
+            g.score += gain;
+            g.popups.push_back({g.orbX, g.orbY, 0.0f, gain});
         }
     }
 
@@ -988,14 +1074,24 @@ void update(Game& g, const Input& in, float dt) {
 // Rendering
 // ---------------------------------------------------------------------------
 void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
-    // Drawn larger than the collision radius, centred on the bomb, so it reads
-    // at a similar scale to Jack and the chasers.
-    const float dw = 24.0f, dh = 27.0f;
+    // Keep render size consistent with collision extents.
+    const float dw = BOMB_HALF_W * 2.0f;
+    const float dh = BOMB_HALF_H * 2.0f;
     drawSprite(r, SP_BOMB, b.x - dw / 2, b.y - dh / 2, dw, dh, false);
     if (lit) {                                       // animated fuse spark
-        bool flick = std::fmod(t, 0.2f) < 0.1f;
-        setCol(r, flick ? Color{255, 230, 90} : Color{255, 150, 40});
-        fillCircle(r, b.x + 1, b.y - dh / 2 - 2, flick ? 4.0f : 3.0f);
+        // Original bomb_activated has 6 frames over 0.3s -> 0.05s per frame.
+        int step = (int)(std::fmod(t, 0.3f) / 0.05f) % 6;
+        const float fx = b.x + dw * 0.10f;
+        const float fy = b.y - dh * 0.36f;
+        static const Color sparkCol[6] = {
+            {255, 190, 70}, {255, 225, 110}, {255, 245, 160},
+            {255, 225, 110}, {255, 190, 70}, {255, 145, 40}
+        };
+        static const float sparkR[6] = {1.8f, 2.3f, 2.7f, 2.3f, 2.0f, 1.6f};
+        setCol(r, sparkCol[step]);
+        fillCircle(r, fx, fy, sparkR[step]);
+        setCol(r, Color{255, 255, 255});
+        fillCircle(r, fx, fy, step == 2 ? 1.0f : 0.8f);
     }
 }
 
@@ -1110,14 +1206,38 @@ void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
 }
 
 // The Power orb: a pulsing, colour-cycling ball. Grab it to freeze the chasers.
-void drawPowerOrb(SDL_Renderer* r, float x, float y, float t) {
-    static const Color cyc[] = {{255, 80, 80}, {255, 200, 60}, {120, 255, 120},
-                                {90, 160, 255}, {220, 90, 230}};
-    int k = (int)(t * 8) % 5;
-    float rad = 10.0f + std::sin(t * 12.0f) * 1.5f;
-    setCol(r, cyc[k]);             fillCircle(r, x, y, rad);
-    setCol(r, {255, 255, 255});    fillCircle(r, x, y, rad * 0.5f);
-    drawTextCentered(r, "P", x, y - 3, 1, cyc[k]);
+void drawPowerOrb(SDL_Renderer* r, float x, float y, float t, int family) {
+    // Original Power uses a 7-color table rotated every 0.05s.
+    int step = (int)(std::fmod(t, 0.35f) / 0.05f) % 7;
+    static const Color families[7][7] = {
+        // PowerToColors[1] (blue)
+        {{0, 0, 255}, {34, 34, 255}, {102, 102, 255}, {136, 136, 255},
+         {170, 170, 255}, {204, 204, 255}, {238, 238, 255}},
+        // PowerToColors[2] (red)
+        {{255, 0, 0}, {255, 34, 34}, {255, 68, 68}, {255, 102, 102},
+         {255, 170, 170}, {255, 204, 204}, {255, 238, 238}},
+        // PowerToColors[3] (magenta)
+        {{255, 0, 255}, {255, 34, 255}, {255, 68, 255}, {255, 102, 255},
+         {255, 136, 255}, {255, 170, 255}, {255, 204, 255}},
+        // PowerToColors[4] (green)
+        {{0, 255, 0}, {68, 255, 68}, {102, 255, 102}, {136, 255, 136},
+         {170, 255, 170}, {204, 255, 204}, {238, 255, 238}},
+        // PowerToColors[5] (cyan)
+        {{0, 255, 255}, {68, 255, 255}, {102, 255, 255}, {136, 255, 255},
+         {170, 255, 255}, {204, 255, 255}, {238, 255, 255}},
+        // PowerToColors[6] (yellow)
+        {{255, 255, 0}, {255, 255, 68}, {255, 255, 102}, {255, 255, 136},
+         {255, 255, 170}, {255, 255, 204}, {255, 255, 238}},
+        // PowerToColors[7] (grey)
+        {{153, 153, 153}, {221, 221, 221}, {204, 204, 204}, {221, 221, 221},
+         {204, 204, 204}, {187, 187, 187}, {170, 170, 170}}
+    };
+    static const float ringR[7] = {9.4f, 9.8f, 10.2f, 10.6f, 10.2f, 9.8f, 9.4f};
+    const Color* ringCol = families[(family % 7 + 7) % 7];
+    float rad = ringR[step];
+    setCol(r, ringCol[step]);      fillCircle(r, x, y, rad);
+    setCol(r, {255, 255, 255});    fillCircle(r, x, y, rad * 0.48f);
+    drawTextCentered(r, "P", x, y - 3, 1, ringCol[step]);
 }
 
 // Draw the backdrop the current level's layout calls for (screen is 0-based).
@@ -1215,7 +1335,7 @@ void render(SDL_Renderer* r, const Game& g) {
     for (int i = 0; i < (int)g.bombs.size(); ++i)
         if (!g.bombs[i].collected) drawBomb(r, g.bombs[i], i == lit, g.time);
 
-    if (g.orbActive) drawPowerOrb(r, g.orbX, g.orbY, g.time);
+    if (g.orbActive) drawPowerOrb(r, g.orbX, g.orbY, g.time, g.orbFamily);
 
     bool frozen = g.freezeTimer > 0.0f;
     for (const Enemy& e : g.enemies) drawEnemy(r, e, g.time, frozen, g.freezeTimer);
