@@ -84,6 +84,8 @@ constexpr float MAXFALL     = 520.0f;
 
 constexpr float PW = 18.0f;             // player size
 constexpr float PH = 24.0f;
+constexpr float BORDER_SOLID_X = 8.0f * (float)LOGW / (float)GAME_W;
+constexpr float BORDER_SOLID_Y = 8.0f * (float)LOGH / (float)GAME_H;
 // Bombs are 12x16 in the original 224x224 playfield.
 constexpr float BOMB_HALF_W = 6.0f * (float)LOGW / (float)GAME_W;
 constexpr float BOMB_HALF_H = 8.0f * (float)LOGH / (float)GAME_H;
@@ -107,6 +109,7 @@ constexpr int POWER_POINTS[] = {100, 200, 300, 500, 800, 1200, 2000};
 
 // Mummies drop in over time and transform into flying chasers on the ground.
 constexpr float MUMMY_APPEAR_TIME = 1.1f;   // pop-in pause before it moves
+constexpr float MUMMY_DISAPPEAR_TIME = 0.5f; // bottom-floor vanish before transform
 constexpr float MUMMY_SPAWN_DELAY = 3.6f;   // seconds between mummy spawns
 constexpr float MUMMY_WALK_SPEED  = 70.0f;  // platform walk speed (world px/s)
 constexpr float FLY_SPEED         = 120.0f; // base speed of transformed chasers
@@ -129,7 +132,7 @@ struct Bomb { float x, y; bool collected; };  // x,y = center
 
 // Enemy kinds match the level data's transform sequence (see levels_data.h).
 enum EKind  { EK_BIRD, EK_MUMMY, EK_SPHERE, EK_ORB, EK_HORN, EK_CLUB, EK_UFO };
-enum EPhase { EP_FLY, EP_APPEAR, EP_WALK, EP_FALL };  // mummy lifecycle; others fly
+enum EPhase { EP_FLY, EP_APPEAR, EP_WALK, EP_FALL, EP_DISAPPEAR };  // mummy lifecycle; others fly
 
 struct Enemy {
     float x, y, vx, vy, r;
@@ -605,6 +608,50 @@ SDL_Texture* g_bannerTex[BANNER_PHASES] = {};
 constexpr int LIVE_W = 31, LIVE_H = 32;
 SDL_Texture* g_liveTex = nullptr;
 
+const std::array<Color, 8>& borderPaletteForScreen(int screen) {
+    static const std::array<Color, 8> platform1 = {{
+        {255, 223, 0}, {255, 191, 0}, {255, 159, 0}, {255, 127, 0},
+        {255, 95, 0},  {255, 63, 0},  {255, 63, 0},  {255, 31, 0}
+    }};
+    static const std::array<Color, 8> platform2 = {{
+        {0, 223, 0}, {0, 191, 0}, {0, 191, 0}, {0, 159, 0},
+        {0, 127, 0}, {0, 95, 0},  {0, 63, 0},  {0, 31, 0}
+    }};
+    static const std::array<Color, 8> platform3 = {{
+        {252, 252, 80}, {252, 252, 0}, {252, 252, 0}, {216, 216, 0},
+        {180, 180, 0},  {144, 144, 0}, {108, 108, 0}, {72, 72, 0}
+    }};
+    static const std::array<Color, 8> platform4 = {{
+        {0, 255, 255}, {0, 204, 255}, {0, 204, 255}, {0, 170, 255},
+        {0, 136, 255}, {0, 0, 255},   {0, 0, 204},   {0, 0, 136}
+    }};
+
+    // Original levels map screens to border palettes as follows:
+    // screen 1->Platform1, 2->Platform2, 3->Platform1, 4->Platform3, 5->Platform4.
+    switch (screen) {
+        case 1: return platform2;
+        case 2: return platform1;
+        case 3: return platform3;
+        case 4: return platform4;
+        default: return platform1;
+    }
+}
+
+void drawPlayfieldBorder(SDL_Renderer* r, int screen) {
+    const auto& pal = borderPaletteForScreen(screen);
+    const float x0 = 0.0f;
+    const float y0 = (float)HUD_H;
+    const float w = (float)GAME_W;
+    const float h = (float)GAME_H;
+    for (int i = 0; i < 8; ++i) {
+        setCol(r, pal[i]);
+        fillR(r, x0 + i, y0 + i, w - 2.0f * i, 1.0f);                     // top
+        fillR(r, x0 + i, y0 + h - 1.0f - i, w - 2.0f * i, 1.0f);          // bottom
+        fillR(r, x0 + i, y0 + i, 1.0f, h - 2.0f * i);                      // left
+        fillR(r, x0 + w - 1.0f - i, y0 + i, 1.0f, h - 2.0f * i);           // right
+    }
+}
+
 void buildBackground(SDL_Renderer* ren) {
     int w = 0, h = 0, comp = 0;
     stbi_uc* px = stbi_load_from_memory(screens_png, (int)screens_png_len,
@@ -813,6 +860,11 @@ void updateMummy(Game& g, Enemy& e, float dt) {
         }
         return;
     }
+    if (e.phase == EP_DISAPPEAR) {
+        e.timer -= dt;
+        if (e.timer <= 0) transformMummy(g, e);
+        return;
+    }
     const float halfH = 14.0f, halfW = 8.0f;
     e.vy += GRAVITY * dt;
     if (e.vy > MAXFALL) e.vy = MAXFALL;
@@ -833,7 +885,13 @@ void updateMummy(Game& g, Enemy& e, float dt) {
             ground = &pl; break;
         }
     if (!ground) { e.phase = EP_FALL; return; }
-    if (ground->y >= FLOOR_TOP - 1.0f) { transformMummy(g, e); return; }  // hit the floor
+    if (ground->y >= FLOOR_TOP - 1.0f) {
+        // On bottom floor, vanish briefly, then transform into the next chaser.
+        e.phase = EP_DISAPPEAR;
+        e.timer = MUMMY_DISAPPEAR_TIME;
+        e.vx = e.vy = 0.0f;
+        return;
+    }
     e.phase = EP_WALK;
     if (e.vx == 0) e.vx = MUMMY_WALK_SPEED;
     e.x += e.vx * dt;
@@ -954,7 +1012,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     if (p.vx > 0) p.face = 1;
     else if (p.vx < 0) p.face = -1;
     p.x += p.vx * dt;
-    p.x = std::clamp(p.x, 0.0f, LOGW - PW);
+    p.x = std::clamp(p.x, BORDER_SOLID_X, LOGW - PW - BORDER_SOLID_X);
 
     // Jump / flutter.
     if (in.jumpPressed) {
@@ -975,7 +1033,10 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     float oldTop = p.y;
     float oldBottom = p.y + PH;
     p.y += p.vy * dt;
-    if (p.y < 0) { p.y = 0; if (p.vy < 0) p.vy = 0; }
+    if (p.y < BORDER_SOLID_Y) {
+        p.y = BORDER_SOLID_Y;
+        if (p.vy < 0) p.vy = 0;
+    }
 
     // Solid platforms: collide with both top and bottom faces.
     p.onGround = false;
@@ -1154,7 +1215,10 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             else                    updateFlyer(g, e, dt, pcx, pcy);
         }
 
-        if (e.phase == EP_APPEAR) { ++it; continue; }   // intangible while popping in
+        if (e.phase == EP_APPEAR || e.phase == EP_DISAPPEAR) {
+            ++it;
+            continue;   // intangible while appearing/disappearing
+        }
 
         float ex = pcx - e.x, ey = pcy - e.y;
         bool touching = ex * ex + ey * ey < (e.r + 9.0f) * (e.r + 9.0f);
@@ -1493,6 +1557,10 @@ void render(SDL_Renderer* r, const Game& g) {
     bool frozen = g.freezeTimer > 0.0f;
     for (const Enemy& e : g.enemies) drawEnemy(r, e, g.time, frozen, g.freezeTimer);
     drawPlayer(r, g.p, g.time, g.playerDying, g.deathPhase, g.deathFrame);
+
+    useScreen(r);
+    drawPlayfieldBorder(r, currentScreen(g));
+    useWorld(r);
 
     // Floating score popups (kills, bombs, power).
     for (const Popup& pp : g.popups) {
