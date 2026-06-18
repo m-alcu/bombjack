@@ -49,6 +49,7 @@
 #include "live_png.h"        // little Jack life icon for the HUD (31x32)
 #include "jack_png.h"        // Jack animation frames (15 x 16x15) from the original
 #include "bird_png.h"        // bird enemy flap frames (9 x 16x16) from the original
+#include "mummy_png.h"       // mummy enemy frames (8 x 16x16) from the original
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
 
@@ -283,9 +284,6 @@ enum SpriteId {
 
 struct Sprite { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 Sprite g_sprites[SP_COUNT];
-// Per-sprite eye overlays (only the eye pixels), used to pulse enemy eyes red
-// without recolouring the whole body. nullptr for sprites with no eyes.
-SDL_Texture* g_eyeTex[SP_COUNT] = {};
 
 // Jack's animation frames, mirroring the original game (bombjack-resources):
 // an idle pose, a 4-frame walk cycle per direction, and directional flying
@@ -319,6 +317,20 @@ constexpr Uint8 EYE_PULSE[] = {255, 222, 189, 156, 115, 82, 49, 0,
                                49, 82, 115, 156, 189, 222};
 SDL_Texture* g_birdTex[BF_COUNT] = {};        // bird bodies (natural colours)
 SDL_Texture* g_birdEye[BF_COUNT] = {};        // bird eye overlays
+
+// Mummy enemy: idle pose, a 3-frame walk cycle per direction, and a falling
+// pose, mirroring the original (mummy.lua). Like the bird, only the eyes pulse.
+enum MummyFrame {
+    MF_IDLE,
+    MF_WALK_R0, MF_WALK_R1, MF_WALK_R2,
+    MF_WALK_L0, MF_WALK_L1, MF_WALK_L2,
+    MF_FALL,
+    MF_COUNT
+};
+constexpr int MUMMY_FW = 16, MUMMY_FH = 16;
+constexpr float MUMMY_WALK_FRAME = 0.1f;      // 0.3s / 3 frames (arcade rate)
+SDL_Texture* g_mummyTex[MF_COUNT] = {};       // mummy bodies (natural colours)
+SDL_Texture* g_mummyEye[MF_COUNT] = {};       // mummy eye overlays
 
 // Current red intensity of the pulsing enemy eyes at time t.
 inline Uint8 eyePulse(float t) {
@@ -418,9 +430,6 @@ void buildSprites(SDL_Renderer* ren) {
             SDL_Rect src{pr.x, pr.y, pr.w, pr.h};
             SDL_BlitSurface(sheet, &src, s, nullptr);
             g_sprites[pr.id] = {pr.w, pr.h, texFromSurface(ren, s)};
-            // Mummies (zombies) get pulsing eyes like the bird.
-            if (pr.id == SP_MUMMY || pr.id == SP_MUMMY_WALK || pr.id == SP_MUMMY_FALL)
-                g_eyeTex[pr.id] = makeEyeMask(ren, s);
             SDL_DestroySurface(s);
         }
         SDL_DestroySurface(sheet);
@@ -482,6 +491,27 @@ void buildSprites(SDL_Renderer* ren) {
         stbi_image_free(dpx);
     } else {
         std::fprintf(stderr, "bird sprite decode failed\n");
+    }
+
+    // Mummy frames: slice the embedded strip into MF_COUNT cells.
+    int mw = 0, mh = 0, mc = 0;
+    stbi_uc* mpx = stbi_load_from_memory(mummy_png, (int)mummy_png_len,
+                                         &mw, &mh, &mc, 4);
+    if (mpx) {
+        SDL_Surface* strip =
+            SDL_CreateSurfaceFrom(mw, mh, SDL_PIXELFORMAT_RGBA32, mpx, mw * 4);
+        for (int i = 0; i < MF_COUNT; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(MUMMY_FW, MUMMY_FH, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{i * MUMMY_FW, 0, MUMMY_FW, MUMMY_FH};
+            SDL_BlitSurface(strip, &src, f, nullptr);
+            g_mummyTex[i] = texFromSurface(ren, f);
+            g_mummyEye[i] = makeEyeMask(ren, f);
+            SDL_DestroySurface(f);
+        }
+        SDL_DestroySurface(strip);
+        stbi_image_free(mpx);
+    } else {
+        std::fprintf(stderr, "mummy sprite decode failed\n");
     }
 }
 
@@ -1037,12 +1067,39 @@ void drawBird(SDL_Renderer* r, const Enemy& e, float t, bool frozen) {
     }
 }
 
+// The mummy walks a 3-frame cycle (directional), with distinct idle and falling
+// poses, mirroring the original (mummy.lua). Body keeps its colours; eyes pulse.
+void drawMummy(SDL_Renderer* r, const Enemy& e, float t, bool frozen) {
+    int frame;
+    if (e.phase == EP_FALL) {
+        frame = MF_FALL;
+    } else if (e.phase == EP_WALK && std::fabs(e.vx) > 1.0f) {
+        int step = (int)(t / MUMMY_WALK_FRAME) % 3;
+        frame = (e.vx < 0 ? MF_WALK_L0 : MF_WALK_R0) + step;
+    } else {
+        frame = MF_IDLE;                            // appearing / standing still
+    }
+    SDL_Texture* body = g_mummyTex[frame];
+    SDL_Texture* eye  = g_mummyEye[frame];
+    if (!body) return;
+    const float w = 26.0f, h = 28.0f;
+    SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
+    if (frozen) {
+        drawTexTinted(r, body, dst, false, 90, 150, 255);
+        if (eye) drawTexTinted(r, eye, dst, false, 90, 150, 255);
+    } else {
+        drawTexTinted(r, body, dst, false, 255, 255, 255);
+        if (eye) drawTexTinted(r, eye, dst, false, eyePulse(t), 0, 0);
+    }
+}
+
 void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
                float freezeTimer) {
     // Mummies flash white as they pop in; flyers blink as the freeze wears off.
     if (e.phase == EP_APPEAR && std::fmod(t, 0.12f) < 0.06f) return;
     if (frozen && freezeTimer < 1.0f && std::fmod(t, 0.16f) < 0.08f) return;
-    if (e.kind == EK_BIRD) { drawBird(r, e, t, frozen); return; }
+    if (e.kind == EK_BIRD)  { drawBird(r, e, t, frozen);  return; }
+    if (e.kind == EK_MUMMY) { drawMummy(r, e, t, frozen); return; }
     float w, h;
     SpriteId id = enemySprite(e, t, w, h);
     bool flip = e.vx < 0;
@@ -1050,12 +1107,6 @@ void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
     if (frozen) SDL_SetTextureColorMod(tex, 90, 150, 255);   // frozen blue tint
     drawSprite(r, id, e.x - w / 2, e.y - h / 2, w, h, flip);
     if (frozen) SDL_SetTextureColorMod(tex, 255, 255, 255);
-    // Mummies (zombies): pulse the eyes red on top of the body.
-    if (g_eyeTex[id]) {
-        SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
-        if (frozen) drawTexTinted(r, g_eyeTex[id], dst, flip, 90, 150, 255);
-        else        drawTexTinted(r, g_eyeTex[id], dst, flip, eyePulse(t), 0, 0);
-    }
 }
 
 // The Power orb: a pulsing, colour-cycling ball. Grab it to freeze the chasers.
