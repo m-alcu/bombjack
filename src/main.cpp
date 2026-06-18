@@ -45,6 +45,7 @@
 #include "stb_image.h"
 #pragma GCC diagnostic pop
 #include "screens_png.h"
+#include "banner_png.h"     // the colorful "BOMB JACK" title logo (191x79)
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
 
@@ -56,9 +57,15 @@ namespace {
 constexpr int LOGW = 512;   // world coordinate space (game logic + drawing)
 constexpr int LOGH = 448;
 
-// The arcade screen is 224x224. We render the whole world into a 224x224 logical
-// canvas (via a render scale) and present it pixel-doubled to a 448x448 window.
-constexpr int VIEW      = 224;
+// The arcade screen is a 224-wide stack: a 16px top HUD strip, a 224x224 play
+// area, and a 16px bottom HUD strip (224x256 total). The 512x448 world is scaled
+// into the central play band; the HUD strips are drawn in raw screen pixels. The
+// whole thing is presented pixel-quadrupled (x4) to an 896x1024 window.
+constexpr int GAME_W   = 224;                          // play area
+constexpr int GAME_H   = 224;
+constexpr int HUD_H    = 16;                           // each HUD strip
+constexpr int SCREEN_W = GAME_W;                       // 224
+constexpr int SCREEN_H = HUD_H + GAME_H + HUD_H;       // 256
 constexpr int WIN_SCALE = 4;
 
 // Player physics — tuned for the floaty Bomb Jack feel.
@@ -243,6 +250,21 @@ void drawTextCentered(SDL_Renderer* r, const char* t, float cx, float y, int s, 
     drawText(r, t, cx - textWidth(t, s) / 2.0f, y, s, c);
 }
 
+// Confine drawing to the central 224x224 play band (below the top HUD strip)
+// and scale the 512x448 world into it. SDL multiplies the viewport rect by the
+// render scale, so the viewport is given in world units: y = HUD_H / scaleY.
+void useWorld(SDL_Renderer* r) {
+    SDL_SetRenderScale(r, (float)GAME_W / LOGW, (float)GAME_H / LOGH);
+    SDL_Rect vp{0, HUD_H * LOGH / GAME_H, LOGW, LOGH};   // y = 16 * 448/224 = 32
+    SDL_SetRenderViewport(r, &vp);
+}
+
+// Draw directly in 224x256 screen pixels — used for the HUD strips.
+void useScreen(SDL_Renderer* r) {
+    SDL_SetRenderScale(r, 1.0f, 1.0f);
+    SDL_SetRenderViewport(r, nullptr);
+}
+
 // ---------------------------------------------------------------------------
 // Sprites — Jack, bombs and enemies are cropped from the embedded official
 // Bomb Jack sprite sheet (sprites_pack.h); the girder platform is still a small
@@ -361,6 +383,15 @@ constexpr int BG_W = 224, BG_H = 224;
 SDL_Texture* g_bgTex = nullptr;
 int g_bgCount = 0;
 
+// Title logo (192x80, black colour-keyed to transparent), shown on the welcome
+// screen. The ray backdrop uses three blues that the arcade cycles to make the
+// rays appear to spin; we bake one texture per rotation phase and flip between
+// them. Decoded once alongside the backgrounds.
+constexpr int BANNER_W = 192, BANNER_H = 80;
+constexpr int BANNER_PHASES = 3;
+constexpr float BANNER_ROT = 0.05f;   // seconds per rotation step (arcade rate)
+SDL_Texture* g_bannerTex[BANNER_PHASES] = {};
+
 void buildBackground(SDL_Renderer* ren) {
     int w = 0, h = 0, comp = 0;
     stbi_uc* px = stbi_load_from_memory(screens_png, (int)screens_png_len,
@@ -375,6 +406,36 @@ void buildBackground(SDL_Renderer* ren) {
     SDL_DestroySurface(s);
     stbi_image_free(px);
     g_bgCount = w / BG_W;
+
+    // Title logo. Build one texture per rotation phase, cycling the three ray
+    // blues (BombjackLogoColors from the original game) so the rays spin.
+    int bw = 0, bh = 0, bc = 0;
+    stbi_uc* bpx = stbi_load_from_memory(banner_png, (int)banner_png_len,
+                                         &bw, &bh, &bc, 4);
+    if (!bpx) {
+        std::fprintf(stderr, "banner decode failed\n");
+        return;
+    }
+    const Uint8 blues[BANNER_PHASES][3] = {{0, 82, 255}, {0, 140, 255}, {0, 189, 255}};
+    std::vector<Uint8> buf(bw * bh * 4);
+    for (int phase = 0; phase < BANNER_PHASES; ++phase) {
+        std::memcpy(buf.data(), bpx, buf.size());
+        for (size_t p = 0; p < buf.size(); p += 4) {
+            for (int i = 0; i < BANNER_PHASES; ++i)
+                if (buf[p] == blues[i][0] && buf[p + 1] == blues[i][1] &&
+                    buf[p + 2] == blues[i][2]) {
+                    const Uint8* c = blues[(i + phase) % BANNER_PHASES];
+                    buf[p] = c[0]; buf[p + 1] = c[1]; buf[p + 2] = c[2];
+                    break;
+                }
+        }
+        SDL_Surface* bs = SDL_CreateSurfaceFrom(bw, bh, SDL_PIXELFORMAT_RGBA32,
+                                                buf.data(), bw * 4);
+        g_bannerTex[phase] = SDL_CreateTextureFromSurface(ren, bs);
+        SDL_SetTextureScaleMode(g_bannerTex[phase], SDL_SCALEMODE_NEAREST);
+        SDL_DestroySurface(bs);
+    }
+    stbi_image_free(bpx);
 }
 
 // ---------------------------------------------------------------------------
@@ -846,19 +907,64 @@ void drawBackground(SDL_Renderer* r, int screen) {
     }
 }
 
+// HUD strips drawn in raw screen pixels (224 wide, 16 tall each). Mirrors the
+// arcade layout: score and lives up top; round and the power gauge below.
+void drawHud(SDL_Renderer* r, const Game& g) {
+    char buf[64];
+    setCol(r, {0, 0, 0});
+    fillR(r, 0, 0, SCREEN_W, HUD_H);                 // top strip
+    fillR(r, 0, HUD_H + GAME_H, SCREEN_W, HUD_H);    // bottom strip
+
+    // Top strip.
+    std::snprintf(buf, sizeof(buf), "SCORE %06d", g.score);
+    drawText(r, buf, 3, 1, 2, {255, 255, 255});
+    std::snprintf(buf, sizeof(buf), "X%d", g.lives);
+    drawText(r, buf, SCREEN_W - textWidth(buf, 2) - 3, 1, 2, {255, 180, 180});
+
+    // Bottom strip.
+    const float by = HUD_H + GAME_H + 1;             // 241
+    std::snprintf(buf, sizeof(buf), "ROUND %d", g.level);
+    drawText(r, buf, 3, by, 2, {200, 220, 255});
+    if (g.streak > 1) {
+        std::snprintf(buf, sizeof(buf), "BONUS X%d", g.streak);
+        drawTextCentered(r, buf, SCREEN_W / 2.0f, by + 3, 1, {255, 230, 120});
+    }
+    // POWER gauge — fills as bombs are caught; a full bar spawns a P orb.
+    {
+        float frac = std::min(g.powerMeter / POWER_NEEDED, 1.0f);
+        const float gx = SCREEN_W - 64;              // 160
+        setCol(r, {40, 40, 70});    fillR(r, gx, by + 4, 60, 6);
+        setCol(r, {120, 200, 255}); fillR(r, gx, by + 4, 60 * frac, 6);
+    }
+}
+
 void render(SDL_Renderer* r, const Game& g) {
-    drawBackground(r, currentScreen(g));
+    useWorld(r);
 
     if (g.state == TITLE) {
-        drawSprite(r, SP_JACK_STAND, LOGW / 2.0f - 40, 70, 80, 80, false);
-        drawTextCentered(r, "BOMB JACK", LOGW / 2.0f, 180, 6, {255, 210, 60});
-        drawTextCentered(r, "PRESS SPACE TO START", LOGW / 2.0f, 260, 2,
-                         std::fmod(g.time, 1.0f) < 0.5f ? Color{230, 230, 230}
-                                                        : Color{120, 120, 120});
-        drawTextCentered(r, "ARROWS MOVE   SPACE JUMP-FLOAT", LOGW / 2.0f, 310, 1,
-                         {150, 150, 170});
+        // Welcome screen: solid black background with the logo centered in the
+        // play area. Drawn in raw screen pixels so the logo keeps its true
+        // proportions.
+        useScreen(r);
+        setCol(r, {0, 0, 0});
+        SDL_RenderClear(r);
+        const float bx = (SCREEN_W - BANNER_W) / 2.0f;
+        const float by = HUD_H + (GAME_H - BANNER_H) / 2.0f;   // play-area middle
+        int phase = (int)(g.time / BANNER_ROT) % BANNER_PHASES;
+        if (g_bannerTex[phase]) {
+            SDL_FRect dst{bx, by, (float)BANNER_W, (float)BANNER_H};
+            SDL_RenderTexture(r, g_bannerTex[phase], nullptr, &dst);
+        }
+        drawTextCentered(r, "PRESS SPACE TO START", SCREEN_W / 2.0f, by + BANNER_H + 14,
+                         1, std::fmod(g.time, 1.0f) < 0.5f ? Color{230, 230, 230}
+                                                           : Color{120, 120, 120});
+        drawTextCentered(r, "ARROWS MOVE   SPACE JUMP-FLOAT", SCREEN_W / 2.0f,
+                         by + BANNER_H + 28, 1, {150, 150, 170});
+        drawHud(r, g);
         return;
     }
+
+    drawBackground(r, currentScreen(g));
 
     // Platforms — tiled girder texture.
     for (const SDL_FRect& pl : g.platforms)
@@ -884,26 +990,7 @@ void render(SDL_Renderer* r, const Game& g) {
         drawTextCentered(r, sb, pp.x, pp.y, 1, {255, 240, 140});
     }
 
-    // HUD.
     char buf[64];
-    std::snprintf(buf, sizeof(buf), "SCORE %06d", g.score);
-    drawText(r, buf, 8, 6, 2, {255, 255, 255});
-    std::snprintf(buf, sizeof(buf), "ROUND %d", g.level);
-    drawTextCentered(r, buf, LOGW / 2.0f, 6, 2, {200, 220, 255});
-    std::snprintf(buf, sizeof(buf), "LIVES %d", g.lives);
-    drawText(r, buf, LOGW - textWidth(buf, 2) - 8, 6, 2, {255, 180, 180});
-    if (g.streak > 1) {
-        std::snprintf(buf, sizeof(buf), "BONUS X%d", g.streak);
-        drawText(r, buf, 8, 26, 1, {255, 230, 120});
-    }
-    // POWER charge gauge — fills as bombs are caught; a full bar spawns a P orb.
-    {
-        float frac = std::min(g.powerMeter / POWER_NEEDED, 1.0f);
-        drawText(r, "POWER", 8, 38, 1, {180, 200, 255});
-        setCol(r, {40, 40, 70});       fillR(r, 44, 38, 60, 6);
-        setCol(r, {120, 200, 255});    fillR(r, 44, 38, 60 * frac, 6);
-    }
-
     if (g.state == ROUNDCLEAR) {
         std::snprintf(buf, sizeof(buf), "ROUND %d CLEAR!", g.level);
         drawTextCentered(r, buf, LOGW / 2.0f, LOGH / 2.0f - 10, 3, {120, 255, 140});
@@ -915,6 +1002,9 @@ void render(SDL_Renderer* r, const Game& g) {
         drawTextCentered(r, "PRESS R TO PLAY AGAIN", LOGW / 2.0f,
                          LOGH / 2.0f + 60, 2, {200, 200, 200});
     }
+
+    useScreen(r);
+    drawHud(r, g);
 }
 
 // ---------------------------------------------------------------------------
@@ -954,8 +1044,8 @@ int renderTest() {
         std::fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
-    SDL_Window* win = SDL_CreateWindow("rendertest", VIEW * WIN_SCALE,
-                                       VIEW * WIN_SCALE, 0);
+    SDL_Window* win = SDL_CreateWindow("rendertest", SCREEN_W * WIN_SCALE,
+                                       SCREEN_H * WIN_SCALE, 0);
     SDL_Renderer* ren = win ? SDL_CreateRenderer(win, nullptr) : nullptr;
     if (!ren) {
         std::fprintf(stderr, "render init failed: %s\n", SDL_GetError());
@@ -963,9 +1053,8 @@ int renderTest() {
         SDL_Quit();
         return 1;
     }
-    SDL_SetRenderLogicalPresentation(ren, VIEW, VIEW,
+    SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H,
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    SDL_SetRenderScale(ren, (float)VIEW / LOGW, (float)VIEW / LOGH);
     buildSprites(ren);
     buildBackground(ren);
 
@@ -1008,8 +1097,8 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    SDL_Window* win = SDL_CreateWindow("Bomb Jack", VIEW * WIN_SCALE,
-                                       VIEW * WIN_SCALE, SDL_WINDOW_RESIZABLE);
+    SDL_Window* win = SDL_CreateWindow("Bomb Jack", SCREEN_W * WIN_SCALE,
+                                       SCREEN_H * WIN_SCALE, SDL_WINDOW_RESIZABLE);
     if (!win) {
         std::fprintf(stderr, "CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
@@ -1036,9 +1125,8 @@ int main(int argc, char** argv) {
         return 1;
     }
     SDL_SetRenderVSync(ren, 1);
-    SDL_SetRenderLogicalPresentation(ren, VIEW, VIEW,
+    SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H,
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    SDL_SetRenderScale(ren, (float)VIEW / LOGW, (float)VIEW / LOGH);
 
     buildSprites(ren);
     buildBackground(ren);

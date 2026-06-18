@@ -35,10 +35,21 @@
       "Bash(env DISPLAY=:1 BJ_LEVELS=/tmp/lvl ./bombjack --rendertest)",
       "Bash(python3 -c ' *)",
       "Bash(./bombjack --selftest 1200)",
-      "Bash(env DISPLAY=:1 BJ_MUMMY=/tmp/mum ./bombjack --rendertest)"
+      "Bash(env DISPLAY=:1 BJ_MUMMY=/tmp/mum ./bombjack --rendertest)",
+      "Bash(sed -n '/SDL_SetRenderViewport/,/extern.*SDL_GetRenderViewport/p' /usr/local/include/SDL3/SDL_render.h | head -40; echo \"=====SCALE=====\"; sed -n '/The drawing coordinates are scaled/,/SDL_SetRenderScale/p' /usr/local/include/SDL3/SDL_render.h | head -40)",
+      "Bash(awk '/Set the drawing area for rendering on the current/,/SDL_SetRenderViewport\\\\\\(SDL_Renderer/' /usr/local/include/SDL3/SDL_render.h)",
+      "Bash(SDL_VIDEODRIVER=dummy ./build/bombjack --rendertest)",
+      "Bash(sed -i 's#    render\\(ren, g\\);\\\\n    SDL_RenderPresent\\(ren\\);##' /tmp/cap.cpp)",
+      "Bash(perl -0pi -e 's/    render\\\\\\(ren, g\\\\\\);\\\\n    SDL_RenderPresent\\\\\\(ren\\\\\\);\\\\n    SDL_Surface\\\\* s = SDL_RenderReadPixels\\\\\\(ren, nullptr\\\\\\);/    render\\(ren, g\\);\\\\n    SDL_Surface* s = SDL_RenderReadPixels\\(ren, nullptr\\);/' /tmp/cap.cpp)",
+      "Bash(python3 -c \"from PIL import Image; im=Image.open\\('assets/spritepack.png'\\); print\\('spritepack', im.size\\)\")",
+      "Bash(DISPLAY=:1 /tmp/cap)",
+      "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/frame.bmp'\\).save\\('/tmp/title.png'\\)\")",
+      "Bash(python3 -c \"import json;d=json.load\\(open\\('bombjack-resources/bombjack/colors.json'\\)\\);print\\(list\\(d.keys\\(\\)\\)\\)\")",
+      "Bash(rm -f /tmp/cap /tmp/cap.cpp /tmp/phase*.bmp /tmp/phases.png; echo cleaned)"
     ],
     "additionalDirectories": [
-      "/tmp"
+      "/tmp",
+      "/usr/local/include/SDL3"
     ]
   }
 }
