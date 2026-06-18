@@ -51,6 +51,7 @@
 #include "bird_png.h"        // bird enemy flap frames (9 x 16x16) from the original
 #include "mummy_png.h"       // mummy enemy frames (8 x 16x16) from the original
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
+#include "sprites_full_png.h" // full original sprites atlas (for Jack death frames)
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
 
 // ---------------------------------------------------------------------------
@@ -93,6 +94,11 @@ constexpr float FREEZE_TIME = 5.0f;     // enemy freeze after grabbing the P orb
 constexpr float POWER_NEEDED = 8.0f;    // lit-bomb "charge" needed to spawn a P orb
 constexpr float ORB_SPEED = 60.0f;      // moving Power orb speed (world px/s)
 constexpr float ORB_R = 10.0f;          // Power orb collision / bounce radius
+constexpr float DEATH_DANCE_TOTAL = 0.5f; // bj_dancing duration (3 frames)
+constexpr int   DEATH_DANCE_LOOPS = 2;    // bj_dancing repeats
+constexpr float DEATH_PLF_TOTAL = 1.0f;   // bj_PLF loop duration (4 frames)
+constexpr float DEATH_DEAD_TOTAL = 1.0f;  // bj_dead one-shot duration (4 frames)
+constexpr float DEATH_WAIT_TIME = 3.0f;   // wait after bj_dead before losing life
 
 // Escalating points for each enemy killed during a single freeze (Bomb Jack).
 constexpr int KILL_POINTS[] = {100, 200, 300, 500, 800, 1200, 2000};
@@ -106,6 +112,7 @@ constexpr float MUMMY_WALK_SPEED  = 70.0f;  // platform walk speed (world px/s)
 constexpr float FLY_SPEED         = 120.0f; // base speed of transformed chasers
 
 enum State { TITLE, PLAYING, ROUNDCLEAR, GAMEOVER };
+enum DeathPhase { DP_NONE, DP_DANCING, DP_FALLING, DP_DEAD, DP_WAIT };
 
 struct Color { Uint8 r, g, b; };
 
@@ -148,6 +155,12 @@ struct Game {
     int   orbFamily = 0;               // 0..6 PowerToColors family index
     float freezeTimer = 0.0f;          // >0 while enemies are frozen & killable
     int   killCount = 0;               // enemies killed in the current freeze
+    bool  playerDying = false;
+    float deathTimer = 0.0f;
+    int   deathPhase = DP_NONE;
+    int   deathFrame = 0;
+    int   deathLoops = 0;
+    float deathAnim = 0.0f;
     // Mummy spawning.
     float mummyTimer = 0.0f;           // counts up to MUMMY_SPAWN_DELAY
     int   mummiesSpawned = 0;          // mummies dropped this round
@@ -307,6 +320,11 @@ enum JackFrame {
 constexpr int JACK_FW = 16, JACK_FH = 15;     // native frame size in the strip
 constexpr float JACK_WALK_FRAME = 0.125f;     // 0.5s / 4 frames (arcade rate)
 SDL_Texture* g_jackTex[JF_COUNT] = {};
+
+struct JackVarFrame { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
+JackVarFrame g_jackDance[3] = {};
+JackVarFrame g_jackPlf[4] = {};
+JackVarFrame g_jackDead[4] = {};
 
 // Bird enemy: a 3-frame wing-flap cycle per heading (left / right / vertical),
 // plus the arcade's pulsing-red recolour (BirdToColors). Frame order matches
@@ -478,6 +496,44 @@ void buildSprites(SDL_Renderer* ren) {
         stbi_image_free(jpx);
     } else {
         std::fprintf(stderr, "jack sprite decode failed\n");
+    }
+
+    // Jack death sequence frames (bj_dancing, bj_PLF, bj_dead) from full atlas.
+    int sw = 0, sh = 0, sc = 0;
+    stbi_uc* spx = stbi_load_from_memory(sprites_full_png, (int)sprites_full_png_len,
+                                         &sw, &sh, &sc, 4);
+    if (spx) {
+        SDL_Surface* atlas =
+            SDL_CreateSurfaceFrom(sw, sh, SDL_PIXELFORMAT_RGBA32, spx, sw * 4);
+        auto cropJackVar = [&](int x, int y, int w, int h, JackVarFrame& out) {
+            SDL_Surface* f = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{x, y, w, h};
+            SDL_BlitSurface(atlas, &src, f, nullptr);
+            out = {w, h, texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+        };
+        static const int danceRect[3][4] = {
+            {249, 31, 16, 17}, {269, 31, 16, 17}, {64, 34, 15, 14}
+        };
+        static const int plfRect[4][4] = {
+            {44, 32, 15, 15}, {64, 32, 15, 16}, {84, 32, 15, 16}, {124, 32, 15, 15}
+        };
+        static const int deadRect[4][4] = {
+            {145, 27, 16, 18}, {166, 29, 13, 16}, {184, 24, 17, 24}, {205, 27, 23, 21}
+        };
+        for (int i = 0; i < 3; ++i)
+            cropJackVar(danceRect[i][0], danceRect[i][1], danceRect[i][2], danceRect[i][3],
+                        g_jackDance[i]);
+        for (int i = 0; i < 4; ++i) {
+            cropJackVar(plfRect[i][0], plfRect[i][1], plfRect[i][2], plfRect[i][3],
+                        g_jackPlf[i]);
+            cropJackVar(deadRect[i][0], deadRect[i][1], deadRect[i][2], deadRect[i][3],
+                        g_jackDead[i]);
+        }
+        SDL_DestroySurface(atlas);
+        stbi_image_free(spx);
+    } else {
+        std::fprintf(stderr, "full sprites atlas decode failed\n");
     }
 
     // Bird frames: slice the embedded strip into BF_COUNT cells.
@@ -684,6 +740,12 @@ void startRound(Game& g) {
     g.orbActive = false;
     g.freezeTimer = 0.0f;
     g.killCount = 0;
+    g.playerDying = false;
+    g.deathTimer = 0.0f;
+    g.deathPhase = DP_NONE;
+    g.deathFrame = 0;
+    g.deathLoops = 0;
+    g.deathAnim = 0.0f;
     g.mummyTimer = 0.0f;
     g.mummiesSpawned = 0;
     g.transformIdx = 0;
@@ -820,6 +882,69 @@ void updateFlyer(Game& g, Enemy& e, float dt, float pcx, float pcy) {
 // ---------------------------------------------------------------------------
 void updatePlaying(Game& g, const Input& in, float dt) {
     Player& p = g.p;
+    if (g.playerDying) {
+        if (g.deathPhase == DP_DANCING) {
+            g.deathAnim += dt;
+            const float step = DEATH_DANCE_TOTAL / 3.0f;
+            while (g.deathAnim >= step) {
+                g.deathAnim -= step;
+                g.deathFrame = (g.deathFrame + 1) % 3;
+                if (g.deathFrame == 0) {
+                    g.deathLoops++;
+                    if (g.deathLoops >= DEATH_DANCE_LOOPS) {
+                        g.deathPhase = DP_FALLING;
+                        g.deathFrame = 0;
+                        g.deathAnim = 0.0f;
+                        p.vx = 0.0f;
+                        p.vy = 0.0f;
+                        break;
+                    }
+                }
+            }
+        } else if (g.deathPhase == DP_FALLING) {
+            g.deathAnim += dt;
+            const float step = DEATH_PLF_TOTAL / 4.0f;
+            while (g.deathAnim >= step) {
+                g.deathAnim -= step;
+                g.deathFrame = (g.deathFrame + 1) % 4;
+            }
+            p.vy += GRAVITY * dt;
+            if (p.vy > MAXFALL) p.vy = MAXFALL;
+            p.y += p.vy * dt;
+            if (p.y + PH >= FLOOR_TOP) {
+                p.y = FLOOR_TOP - PH;
+                p.vy = 0.0f;
+                p.onGround = true;
+                g.deathPhase = DP_DEAD;
+                g.deathFrame = 0;
+                g.deathAnim = 0.0f;
+            } else {
+                p.onGround = false;
+            }
+        } else if (g.deathPhase == DP_DEAD) {
+            g.deathAnim += dt;
+            const float step = DEATH_DEAD_TOTAL / 4.0f;
+            while (g.deathAnim >= step) {
+                g.deathAnim -= step;
+                if (g.deathFrame < 3) g.deathFrame++;
+                else {
+                    g.deathPhase = DP_WAIT;
+                    g.deathTimer = DEATH_WAIT_TIME;
+                    break;
+                }
+            }
+        } else if (g.deathPhase == DP_WAIT) {
+            g.deathTimer -= dt;
+            if (g.deathTimer <= 0.0f) {
+                g.playerDying = false;
+                g.deathPhase = DP_NONE;
+                g.lives--;
+                if (g.lives <= 0) g.state = GAMEOVER;
+                else resetPlayer(g, true);
+            }
+        }
+        return;
+    }
     if (p.invuln > 0) p.invuln -= dt;
     const bool oldOnGround = p.onGround;
     const float oldVy = p.vy;
@@ -1044,9 +1169,16 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 continue;
             }
         } else if (p.invuln <= 0 && touching) {
-            g.lives--;
-            if (g.lives <= 0) g.state = GAMEOVER;
-            else resetPlayer(g, true);
+            g.playerDying = true;
+            g.deathPhase = DP_DANCING;
+            g.deathFrame = 0;
+            g.deathLoops = 0;
+            g.deathAnim = 0.0f;
+            g.deathTimer = 0.0f;
+            p.invuln = 0.0f;
+            p.onGround = false;
+            p.vx = 0.0f;
+            p.vy = 0.0f;
             return;
         }
         ++it;
@@ -1100,7 +1232,23 @@ void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
     }
 }
 
-void drawPlayer(SDL_Renderer* r, const Player& p, float t) {
+void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
+                int deathPhase, int deathFrame) {
+    if (dying) {
+        const JackVarFrame* fr = nullptr;
+        if (deathPhase == DP_DANCING) fr = &g_jackDance[std::clamp(deathFrame, 0, 2)];
+        else if (deathPhase == DP_FALLING) fr = &g_jackPlf[std::clamp(deathFrame, 0, 3)];
+        else if (deathPhase == DP_DEAD || deathPhase == DP_WAIT)
+            fr = &g_jackDead[std::clamp(deathFrame, 0, 3)];
+        if (fr && fr->tex) {
+            const float scale = 26.0f / 16.0f;
+            const float dw = fr->w * scale;
+            const float dh = fr->h * scale;
+            SDL_FRect dst{p.x + PW / 2 - dw / 2, p.y + PH - dh, dw, dh};
+            SDL_RenderTexture(r, fr->tex, nullptr, &dst);
+        }
+        return;
+    }
     if (p.invuln > 0 && std::fmod(t, 0.16f) < 0.08f) return;  // blink when hit
     const bool moving = std::fabs(p.vx) > 1.0f;
     const bool left   = p.face < 0;
@@ -1344,7 +1492,7 @@ void render(SDL_Renderer* r, const Game& g) {
 
     bool frozen = g.freezeTimer > 0.0f;
     for (const Enemy& e : g.enemies) drawEnemy(r, e, g.time, frozen, g.freezeTimer);
-    drawPlayer(r, g.p, g.time);
+    drawPlayer(r, g.p, g.time, g.playerDying, g.deathPhase, g.deathFrame);
 
     // Floating score popups (kills, bombs, power).
     for (const Popup& pp : g.popups) {
@@ -1435,6 +1583,14 @@ int renderTest() {
     if (g_bgTex) SDL_DestroyTexture(g_bgTex);
     for (Sprite& s : g_sprites)
         if (s.tex) SDL_DestroyTexture(s.tex);
+    for (SDL_Texture*& t : g_jackTex)
+        if (t) SDL_DestroyTexture(t);
+    for (JackVarFrame& f : g_jackDance)
+        if (f.tex) SDL_DestroyTexture(f.tex);
+    for (JackVarFrame& f : g_jackPlf)
+        if (f.tex) SDL_DestroyTexture(f.tex);
+    for (JackVarFrame& f : g_jackDead)
+        if (f.tex) SDL_DestroyTexture(f.tex);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
@@ -1547,6 +1703,14 @@ int main(int argc, char** argv) {
     if (g_bgTex) SDL_DestroyTexture(g_bgTex);
     for (Sprite& s : g_sprites)
         if (s.tex) SDL_DestroyTexture(s.tex);
+    for (SDL_Texture*& t : g_jackTex)
+        if (t) SDL_DestroyTexture(t);
+    for (JackVarFrame& f : g_jackDance)
+        if (f.tex) SDL_DestroyTexture(f.tex);
+    for (JackVarFrame& f : g_jackPlf)
+        if (f.tex) SDL_DestroyTexture(f.tex);
+    for (JackVarFrame& f : g_jackDead)
+        if (f.tex) SDL_DestroyTexture(f.tex);
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
