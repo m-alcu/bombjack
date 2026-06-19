@@ -124,8 +124,9 @@ constexpr float DEATH_WAIT_TIME = 3.0f;   // wait after bj_dead before losing li
 
 // Escalating points for each enemy killed during a single freeze (Bomb Jack).
 constexpr int KILL_POINTS[] = {100, 200, 300, 500, 800, 1200, 2000};
-// Original Power orb score tiers (indexed by orb colour family).
-constexpr int POWER_POINTS[] = {100, 200, 300, 500, 800, 1200, 2000};
+// Power orb score tiers, indexed by colour (arcade table): blue 100, red 200,
+// purple 300, green 500, turquoise 800, yellow 1000, silver 2000.
+constexpr int POWER_POINTS[] = {100, 200, 300, 500, 800, 1000, 2000};
 
 // Mummies drop in over time and transform into flying chasers on the ground.
 constexpr float MUMMY_APPEAR_TIME = 1.1f;   // pop-in pause before it moves
@@ -139,12 +140,13 @@ enum DeathPhase { DP_NONE, DP_DANCING, DP_FALLING, DP_DEAD, DP_WAIT };
 
 struct Color { Uint8 r, g, b; };
 
-// The 7 Power-orb base colours, by family index (matching POWER_POINTS):
-// 0 Red=100, 1 Blue=200, 2 Purple=300, 3 Green=500, 4 Aqua=800, 5 Gold=1200,
-// 6 Silver=2000. The orb's family rotates as Jack acts, changing colour/value.
+// The 7 Power-orb colours, by family index (matching POWER_POINTS): 0 blue=100,
+// 1 red=200, 2 purple=300, 3 green=500, 4 turquoise=800, 5 yellow=1000,
+// 6 silver=2000. The colour steps through this fixed cycle each time Jack jumps
+// or hits a wall/barrier — collect it on silver (6) for the highest value.
 constexpr Color POWER_COLORS[7] = {
-    {235, 30, 45}, {45, 80, 240}, {165, 45, 225}, {45, 205, 65},
-    {40, 215, 215}, {240, 195, 45}, {205, 210, 220}
+    {45, 80, 240}, {235, 30, 45}, {165, 45, 225}, {45, 205, 65},
+    {40, 215, 200}, {240, 220, 50}, {200, 205, 220}
 };
 
 struct Input { bool left, right, jumpHeld, jumpPressed; };
@@ -331,6 +333,7 @@ enum JackFrame {
 constexpr int JACK_FW = 16, JACK_FH = 15;     // native frame size in the strip
 constexpr float JACK_WALK_FRAME = 0.125f;     // 0.5s / 4 frames (arcade rate)
 SDL_Texture* g_jackTex[JF_COUNT] = {};
+SDL_Texture* g_jackSilver[JF_COUNT] = {};   // silver/grey Jack, shown during the freeze
 
 struct JackVarFrame { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 JackVarFrame g_jackDance[3] = {};
@@ -525,6 +528,19 @@ void buildSprites(SDL_Renderer* ren) {
             SDL_Rect src{i * JACK_FW, 0, JACK_FW, JACK_FH};
             SDL_BlitSurface(strip, &src, f, nullptr);
             g_jackTex[i] = texFromSurface(ren, f);
+            // Silver/grey twin: desaturate to luminance, tint a cool silver.
+            SDL_Surface* sv = SDL_CreateSurface(JACK_FW, JACK_FH, SDL_PIXELFORMAT_RGBA32);
+            for (int y = 0; y < JACK_FH; ++y)
+                for (int x = 0; x < JACK_FW; ++x) {
+                    const Uint8* sp = (const Uint8*)f->pixels + y * f->pitch + x * 4;
+                    Uint8* dp = (Uint8*)sv->pixels + y * sv->pitch + x * 4;
+                    float L = 0.30f * sp[0] + 0.59f * sp[1] + 0.11f * sp[2];
+                    float l = std::min(1.0f, L / 255.0f + 0.25f);   // lift toward bright silver
+                    dp[0] = (Uint8)(l * 200); dp[1] = (Uint8)(l * 208);
+                    dp[2] = (Uint8)(l * 225); dp[3] = sp[3];
+                }
+            g_jackSilver[i] = texFromSurface(ren, sv);
+            SDL_DestroySurface(sv);
             SDL_DestroySurface(f);
         }
         SDL_DestroySurface(strip);
@@ -989,6 +1005,19 @@ void spawnEnemies(Game& g) {
         g.enemies.push_back(makeBird(g, (i + 0.5f) / birds * 6.2831853f));
 }
 
+// Delete every enemy and respawn the phase's initial set, resetting the
+// mummy-drop progression and any freeze/orb state. Used at the start of a round
+// and whenever a life restarts mid-phase, so each life faces the same opening.
+void restartEnemies(Game& g) {
+    spawnEnemies(g);
+    g.mummyTimer = 0.0f;
+    g.mummiesSpawned = 0;
+    g.transformIdx = 0;
+    g.freezeTimer = 0.0f;
+    g.killCount = 0;
+    g.orbActive = false;
+}
+
 void resetPlayer(Game& g, bool invuln) {
     // Jack starts suspended in mid-air at the centre of the play area — right
     // where the "START!" banner sits — and only begins to fall once the intro
@@ -1147,11 +1176,53 @@ void updateMummy(Game& g, Enemy& e, float dt) {
     e.phase = EP_WALK;
     if (e.vx == 0) e.vx = MUMMY_WALK_SPEED;
     e.x += e.vx * dt;
-    e.x = std::clamp(e.x, e.r, LOGW - e.r);
+    e.x = std::clamp(e.x, BORDER_SOLID_X + e.r, LOGW - BORDER_SOLID_X - e.r);
     float ahead = e.x + (e.vx > 0 ? halfW : -halfW);   // ground under the leading foot?
     if (ahead <= ground->x || ahead >= ground->x + ground->w) {
         if (e.bounces > 0) { e.vx = -e.vx; e.bounces--; }
         else { e.phase = EP_FALL; e.x += (e.vx > 0 ? 2.0f : -2.0f); }
+    }
+}
+
+// Block a flying enemy against the frame borders and the platforms, bouncing it
+// off the face it crossed so it can't pass through them (like Jack / the orb).
+// (ox, oy) is the position before this step, used to pick the entry face.
+void blockEnemy(Game& g, Enemy& e, float ox, float oy) {
+    const float L = BORDER_SOLID_X + e.r, R = LOGW - BORDER_SOLID_X - e.r;
+    const float T = BORDER_SOLID_Y + e.r, B = FLOOR_TOP - e.r;
+    if (e.x < L) { e.x = L; e.vx = std::fabs(e.vx); }
+    if (e.x > R) { e.x = R; e.vx = -std::fabs(e.vx); }
+    if (e.y < T) { e.y = T; e.vy = std::fabs(e.vy); }
+    if (e.y > B) { e.y = B; e.vy = -std::fabs(e.vy); }
+
+    for (const SDL_FRect& pl : g.platforms) {
+        if (pl.y >= FLOOR_TOP - 1.0f) continue;          // floor handled by B above
+        bool overlapX = e.x + e.r > pl.x && e.x - e.r < pl.x + pl.w;
+        bool overlapY = e.y + e.r > pl.y && e.y - e.r < pl.y + pl.h;
+        if (!overlapX || !overlapY) continue;
+
+        const float eps = 0.001f;
+        bool hitTop = oy + e.r <= pl.y + eps && e.y + e.r > pl.y + eps;
+        bool hitBottom = oy - e.r >= pl.y + pl.h - eps && e.y - e.r < pl.y + pl.h - eps;
+        if (hitTop) {
+            e.y = pl.y - e.r;          e.vy = -std::fabs(e.vy);
+        } else if (hitBottom) {
+            e.y = pl.y + pl.h + e.r;   e.vy =  std::fabs(e.vy);
+        } else {
+            bool hitLeft = ox + e.r <= pl.x + eps && e.x + e.r > pl.x + eps;
+            bool hitRight = ox - e.r >= pl.x + pl.w - eps && e.x - e.r < pl.x + pl.w - eps;
+            if (hitLeft) {
+                e.x = pl.x - e.r;          e.vx = -std::fabs(e.vx);
+            } else if (hitRight) {
+                e.x = pl.x + pl.w + e.r;   e.vx =  std::fabs(e.vx);
+            } else if (oy <= pl.y) {       // corner: prefer the top face
+                e.y = pl.y - e.r;          e.vy = -std::fabs(e.vy);
+            } else if (ox <= pl.x) {
+                e.x = pl.x - e.r;          e.vx = -std::fabs(e.vx);
+            } else {
+                e.x = pl.x + pl.w + e.r;   e.vx =  std::fabs(e.vx);
+            }
+        }
     }
 }
 
@@ -1180,11 +1251,9 @@ void updateFlyer(Game& g, Enemy& e, float dt, float pcx, float pcy) {
             e.vx = dx/len * k; e.vy = dy/len * k; break;
         }
     }
+    float ox = e.x, oy = e.y;
     e.x += e.vx * dt; e.y += e.vy * dt;
-    if (e.x < e.r)        { e.x = e.r;        e.vx = std::fabs(e.vx); }
-    if (e.x > LOGW - e.r) { e.x = LOGW - e.r; e.vx = -std::fabs(e.vx); }
-    if (e.y < e.r)        { e.y = e.r;        e.vy = std::fabs(e.vy); }
-    if (e.y > LOGH - e.r) { e.y = LOGH - e.r; e.vy = -std::fabs(e.vy); }
+    blockEnemy(g, e, ox, oy);   // borders + platforms, like Jack
 }
 
 // ---------------------------------------------------------------------------
@@ -1250,7 +1319,11 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 g.deathPhase = DP_NONE;
                 g.lives--;
                 if (g.lives <= 0) g.state = GAMEOVER;
-                else { resetPlayer(g, true); g.startAnim = START_TOTAL; }  // new life intro
+                else {                                  // new life: fresh enemies + intro
+                    resetPlayer(g, true);
+                    restartEnemies(g);
+                    g.startAnim = START_TOTAL;
+                }
             }
         }
         return;
@@ -1261,13 +1334,19 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         return;
     }
     if (p.invuln > 0) p.invuln -= dt;
+    const bool oldOnGround = p.onGround;
+    // The Power orb's colour steps once per "action": a jump, a wall bump, or
+    // landing/headbutting a barrier. Collected into orbStep below.
+    bool orbStep = in.jumpPressed;
 
     // Horizontal movement.
     p.vx = (in.right ? MOVE : 0.0f) - (in.left ? MOVE : 0.0f);
     if (p.vx > 0) p.face = 1;
     else if (p.vx < 0) p.face = -1;
     p.x += p.vx * dt;
-    p.x = std::clamp(p.x, BORDER_SOLID_X, LOGW - PW - BORDER_SOLID_X);
+    float clampedX = std::clamp(p.x, BORDER_SOLID_X, LOGW - PW - BORDER_SOLID_X);
+    if (clampedX != p.x && p.vx != 0.0f) orbStep = true;   // ran into a side wall
+    p.x = clampedX;
 
     // Jump / flutter.
     if (in.jumpPressed) {
@@ -1307,9 +1386,13 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         if (p.vy < 0 && oldTop >= pl.y + pl.h - 1.0f && p.y <= pl.y + pl.h) {
             p.y = pl.y + pl.h;
             p.vy = 0;
+            orbStep = true;                          // bonked a barrier from below
             break;
         }
     }
+    if (!oldOnGround && p.onGround) orbStep = true;  // landed on a barrier
+    // Step the Power orb's colour on this action (fixed cycle, not random).
+    if (g.orbActive && orbStep) g.orbFamily = (g.orbFamily + 1) % 7;
 
     // Bomb collection (lowest remaining index is the lit one).
     int lit = -1;
@@ -1345,7 +1428,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 g.orbY = LOGH / 2.0f - 16.0f;     // play area (as in the original)
                 g.orbVx = ORB_SPEED * 0.5f;
                 g.orbVy = ORB_SPEED * 0.8660254f;
-                g.orbFamily = (int)(g.rng() % 7);   // fixed colour/value for its life
+                g.orbFamily = 0;                    // starts blue; cycles on Jack's actions
             }
         }
     }
@@ -1584,7 +1667,7 @@ void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
 }
 
 void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
-                int deathPhase, int deathFrame) {
+                int deathPhase, int deathFrame, bool frozen) {
     if (dying) {
         const JackVarFrame* fr = nullptr;
         if (deathPhase == DP_DANCING) fr = &g_jackDance[std::clamp(deathFrame, 0, 2)];
@@ -1621,7 +1704,9 @@ void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
     // drawn facing the right way, so no horizontal flip is needed.
     const float dw = 26.0f, dh = 28.0f;
     SDL_FRect dst{p.x + PW / 2 - dw / 2, p.y + PH - dh, dw, dh};
-    if (g_jackTex[f]) SDL_RenderTexture(r, g_jackTex[f], nullptr, &dst);
+    // Silver Jack while enemies are frozen (from grabbing the Power orb).
+    SDL_Texture* tex = frozen && g_jackSilver[f] ? g_jackSilver[f] : g_jackTex[f];
+    if (tex) SDL_RenderTexture(r, tex, nullptr, &dst);
 }
 
 // Pick the sprite + draw box for an enemy based on its kind and phase.
@@ -1894,7 +1979,7 @@ void render(SDL_Renderer* r, const Game& g) {
 
     bool frozen = g.freezeTimer > 0.0f;
     for (const Enemy& e : g.enemies) drawEnemy(r, e, g.time, frozen, g.freezeTimer);
-    drawPlayer(r, g.p, g.time, g.playerDying, g.deathPhase, g.deathFrame);
+    drawPlayer(r, g.p, g.time, g.playerDying, g.deathPhase, g.deathFrame, frozen);
 
     useScreen(r);
     drawPlayfieldBorder(r, currentScreen(g));
