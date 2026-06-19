@@ -111,7 +111,8 @@ constexpr float BONUS_SPEED = 45.0f;    // horizontal patrol speed (world px/s)
 // the centre, and hold briefly. Plays at every phase start and on a new life.
 constexpr float START_SLIDE = 0.55f;    // slide-in duration (s)
 constexpr float START_HOLD  = 0.65f;    // centre hold duration (s)
-constexpr float START_TOTAL = START_SLIDE + START_HOLD;
+constexpr float START_BLACK = 1.0f;     // the background reaches black at t=1s
+constexpr float START_TOTAL = START_SLIDE + START_HOLD;   // 1.2s, then Jack drops
 constexpr float ORB_R = 10.0f;          // Power orb collision / bounce radius
 constexpr float DEATH_DANCE_TOTAL = 0.5f; // bj_dancing duration (3 frames)
 constexpr int   DEATH_DANCE_LOOPS = 2;    // bj_dancing repeats
@@ -290,8 +291,10 @@ SDL_Texture* g_multTex[6] = {};
 Sprite g_coinFrames[7];
 
 // "START!" intro halves (start.png): each carries alternate scanlines of the
-// word, so overlapping them in the centre spells it out.
-Sprite g_startLeft, g_startRight;
+// word, so overlapping them in the centre spells it out. Each half is split into
+// a background mask (the black box, white so it can be tinted with a cycling
+// arcade colour) and the yellow text layer, indexed [0]=left, [1]=right.
+Sprite g_startBg[2], g_startText[2];
 
 // Jack's animation frames, mirroring the original game (bombjack-resources):
 // an idle pose, a 4-frame walk cycle per direction, and directional flying
@@ -608,18 +611,29 @@ void buildSprites(SDL_Renderer* ren) {
     stbi_uc* tpx = stbi_load_from_memory(start_png, (int)start_png_len,
                                          &tw, &th, &tc, 4);
     if (tpx) {
-        SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(tw, th, SDL_PIXELFORMAT_RGBA32, tpx, tw * 4);
-        auto cropHalf = [&](int x0, Sprite& out) {
-            SDL_Surface* f = SDL_CreateSurface(56, th, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{x0, 0, 56, th};
-            SDL_BlitSurface(strip, &src, f, nullptr);
-            out = {56, th, texFromSurface(ren, f)};
-            SDL_DestroySurface(f);
+        // Split a half into: a white background mask (over the black box pixels,
+        // so it can be colour-cycled) and the yellow text layer.
+        auto splitHalf = [&](int x0, Sprite& bg, Sprite& text) {
+            SDL_Surface* b = SDL_CreateSurface(56, th, SDL_PIXELFORMAT_RGBA32);
+            SDL_Surface* t = SDL_CreateSurface(56, th, SDL_PIXELFORMAT_RGBA32);
+            for (int y = 0; y < th; ++y)
+                for (int x = 0; x < 56; ++x) {
+                    const stbi_uc* sp = tpx + ((size_t)y * tw + (x0 + x)) * 4;
+                    Uint8* bp = (Uint8*)b->pixels + y * b->pitch + x * 4;
+                    Uint8* tp = (Uint8*)t->pixels + y * t->pitch + x * 4;
+                    bool opaque = sp[3] > 0;
+                    bool yellow = opaque && sp[0] > 150 && sp[1] > 150 && sp[2] < 120;
+                    bool box    = opaque && !yellow;          // the black background
+                    bp[0] = bp[1] = bp[2] = 255; bp[3] = box ? 255 : 0;
+                    tp[0] = sp[0]; tp[1] = sp[1]; tp[2] = sp[2]; tp[3] = yellow ? 255 : 0;
+                }
+            bg   = {56, th, texFromSurface(ren, b)};
+            text = {56, th, texFromSurface(ren, t)};
+            SDL_DestroySurface(b);
+            SDL_DestroySurface(t);
         };
-        cropHalf(2, g_startLeft);
-        cropHalf(62, g_startRight);
-        SDL_DestroySurface(strip);
+        splitHalf(2,  g_startBg[0], g_startText[0]);
+        splitHalf(62, g_startBg[1], g_startText[1]);
         stbi_image_free(tpx);
     } else {
         std::fprintf(stderr, "start sprite decode failed\n");
@@ -889,10 +903,13 @@ void spawnEnemies(Game& g) {
 }
 
 void resetPlayer(Game& g, bool invuln) {
+    // Jack starts suspended in mid-air at the centre of the play area — right
+    // where the "START!" banner sits — and only begins to fall once the intro
+    // ends and the simulation resumes.
     g.p.x = LOGW / 2.0f - PW / 2.0f;
-    g.p.y = FLOOR_TOP - PH;
+    g.p.y = LOGH / 2.0f - PH / 2.0f;
     g.p.vx = g.p.vy = 0.0f;
-    g.p.onGround = true;
+    g.p.onGround = false;
     g.p.invuln = invuln ? INVULN_TIME : 0.0f;
 }
 
@@ -1709,18 +1726,41 @@ void drawHud(SDL_Renderer* r, const Game& g) {
 // The "START!" intro: the two interlaced halves slide in from the screen edges
 // and overlap in the centre of the play area to spell the word. Raw screen px.
 void drawStartIntro(SDL_Renderer* r, const Game& g) {
-    if (g.startAnim <= 0.0f || !g_startLeft.tex || !g_startRight.tex) return;
-    const float scale = 2.0f;
-    const float w = 56.0f * scale, h = g_startLeft.h * scale;
+    if (g.startAnim <= 0.0f || !g_startBg[0].tex) return;
+    const float scale = 1.0f;            // drawn at the source image's native size
+    const float w = 56.0f * scale, h = g_startBg[0].h * scale;
     const float finalX = (SCREEN_W - w) / 2.0f;
     const float cy = HUD_H + (GAME_H - h) / 2.0f;
     float elapsed = START_TOTAL - g.startAnim;
     float p = std::min(elapsed / START_SLIDE, 1.0f);
     p = 1.0f - (1.0f - p) * (1.0f - p);                   // ease-out
-    float leftX  = -w       + (finalX - (-w))      * p;   // in from the left edge
-    float rightX = SCREEN_W + (finalX - SCREEN_W)  * p;   // in from the right edge
-    SDL_FRect dl{leftX,  cy, w, h};  SDL_RenderTexture(r, g_startLeft.tex,  nullptr, &dl);
-    SDL_FRect dr{rightX, cy, w, h};  SDL_RenderTexture(r, g_startRight.tex, nullptr, &dr);
+    float xs[2] = {-w       + (finalX - (-w))     * p,    // left half: in from left
+                   SCREEN_W + (finalX - SCREEN_W) * p};   // right half: in from right
+
+    // Arcade colour cycling: the black box background steps through a palette.
+    static const Color cyc[] = {
+        {220, 40, 40}, {230, 130, 30}, {220, 200, 40}, {60, 200, 70},
+        {40, 180, 220}, {70, 90, 230}, {180, 60, 220}
+    };
+    const int N = (int)(sizeof(cyc) / sizeof(cyc[0]));
+    Color bgc = cyc[(int)(g.time * 12.0f) % N];
+
+    // The background dims smoothly to black, reaching full black at t=1s (and
+    // staying black afterwards); the yellow text is unaffected.
+    float fade = (elapsed <= START_SLIDE)
+                     ? 1.0f
+                     : std::max(0.0f, 1.0f - (elapsed - START_SLIDE) /
+                                                 (START_BLACK - START_SLIDE));
+
+    for (int i = 0; i < 2; ++i) {
+        SDL_FRect d{xs[i], cy, w, h};
+        SDL_SetTextureColorMod(g_startBg[i].tex,                        // cycling box
+                               (Uint8)(bgc.r * fade), (Uint8)(bgc.g * fade),
+                               (Uint8)(bgc.b * fade));
+        SDL_RenderTexture(r, g_startBg[i].tex, nullptr, &d);
+        SDL_SetTextureColorMod(g_startText[i].tex, 255, 255, 255);      // yellow text
+        SDL_RenderTexture(r, g_startText[i].tex, nullptr, &d);
+    }
 }
 
 void render(SDL_Renderer* r, const Game& g) {
