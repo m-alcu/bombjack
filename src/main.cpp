@@ -54,6 +54,7 @@
 #include "coins_png.h"       // coin spin frames frozen enemies turn into (7 x, coins.png)
 #include "start_png.h"       // "START!" intro: two interlaced halves (start.png)
 #include "powerball_png.h"   // the P power-orb sprite (16x16), tinted per type
+#include "explosion_png.h"   // 3-frame bomb-clear explosion (small -> big)
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "sprites_full_png.h" // full original sprites atlas (for Jack death frames)
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
@@ -171,6 +172,8 @@ struct Enemy {
 };
 
 struct Popup { float x, y, age = 0.0f; int value = 0; };  // floating score text
+struct Explosion { float x, y, age = 0.0f; };            // bomb-clear burst (3 frames)
+constexpr float EXPL_FRAME = 0.06f;                       // per-frame time (quick)
 
 struct Game {
     int   state = TITLE;
@@ -209,6 +212,7 @@ struct Game {
     std::vector<Bomb>      bombs;
     std::vector<Enemy>     enemies;
     std::vector<Popup>     popups;
+    std::vector<Explosion> explosions;
     std::mt19937           rng{std::random_device{}()};
 };
 
@@ -303,6 +307,9 @@ Sprite g_coinFrames[7];
 // colour-cycle phase [0..3]: each frame recolours the ball's bands with 4
 // shades near the family's base colour, and stepping the phase cycles them.
 Sprite g_orbCycle[7][4];
+
+// Bomb-clear explosion frames (explosion.png): small -> medium -> big.
+Sprite g_explFrames[3];
 
 // "START!" intro halves (start.png): each carries alternate scanlines of the
 // word, so overlapping them in the centre spells it out. Each half is split into
@@ -698,6 +705,27 @@ void buildSprites(SDL_Renderer* ren) {
         std::fprintf(stderr, "power orb sprite decode failed\n");
     }
 
+    // Bomb-clear explosion (explosion.png): 3 frames, growing small -> big.
+    int ew = 0, eh = 0, ec = 0;
+    stbi_uc* epx = stbi_load_from_memory(explosion_png, (int)explosion_png_len,
+                                         &ew, &eh, &ec, 4);
+    if (epx) {
+        SDL_Surface* strip =
+            SDL_CreateSurfaceFrom(ew, eh, SDL_PIXELFORMAT_RGBA32, epx, ew * 4);
+        static const int er[3][4] = {{4, 5, 8, 8}, {18, 3, 12, 12}, {36, 1, 16, 16}};
+        for (int i = 0; i < 3; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(er[i][2], er[i][3], SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{er[i][0], er[i][1], er[i][2], er[i][3]};
+            SDL_BlitSurface(strip, &src, f, nullptr);
+            g_explFrames[i] = {er[i][2], er[i][3], texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+        }
+        SDL_DestroySurface(strip);
+        stbi_image_free(epx);
+    } else {
+        std::fprintf(stderr, "explosion sprite decode failed\n");
+    }
+
     // Bird frames: slice the embedded strip into BF_COUNT cells.
     int dw = 0, dh = 0, dc = 0;
     stbi_uc* dpx = stbi_load_from_memory(bird_png, (int)bird_png_len,
@@ -1015,6 +1043,7 @@ void startRound(Game& g) {
     g.mummiesSpawned = 0;
     g.transformIdx = 0;
     g.popups.clear();
+    g.explosions.clear();
     g.phaseStart = g.score;            // start counting this phase's points fresh
     g.multiplier = 1;                  // the points multiplier resets each level
     g.bonusActive = false;
@@ -1294,6 +1323,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             b.y > p.y - BOMB_HALF_H && b.y < p.y + PH + BOMB_HALF_H) {
             b.collected = true;
             g.bombsLeft--;
+            g.explosions.push_back({b.x, b.y, 0.0f});   // quick clear burst
             int gain;
             if (i == lit) {                       // grabbed the lit one, in sequence
                 g.streak = std::min(g.streak + 1, 5);
@@ -1434,6 +1464,12 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         it->age += dt;
         it->y -= 18.0f * dt;
         if (it->age > 1.0f) it = g.popups.erase(it); else ++it;
+    }
+
+    // Age out clear explosions (3 quick frames, then gone).
+    for (auto it = g.explosions.begin(); it != g.explosions.end();) {
+        it->age += dt;
+        if (it->age >= 3 * EXPL_FRAME) it = g.explosions.erase(it); else ++it;
     }
 
     if (g.bombsLeft <= 0) {
@@ -1833,6 +1869,16 @@ void render(SDL_Renderer* r, const Game& g) {
         if (!g.bombs[i].collected) { lit = i; break; }
     for (int i = 0; i < (int)g.bombs.size(); ++i)
         if (!g.bombs[i].collected) drawBomb(r, g.bombs[i], i == lit, g.time);
+
+    // Bomb-clear explosions: play the 3 frames quickly, small -> big.
+    for (const Explosion& ex : g.explosions) {
+        int fi = std::min(2, (int)(ex.age / EXPL_FRAME));
+        const Sprite& f = g_explFrames[fi];
+        if (!f.tex) continue;
+        const float s = 1.6f;                          // a touch bigger than a bomb
+        SDL_FRect dst{ex.x - f.w * s / 2, ex.y - f.h * s / 2, f.w * s, f.h * s};
+        SDL_RenderTexture(r, f.tex, nullptr, &dst);
+    }
 
     if (g.orbActive) drawPowerOrb(r, g.orbX, g.orbY, g.time, g.orbFamily);
 
