@@ -53,6 +53,7 @@
 #include "bonus_png.h"       // bonus "B" coin spin frames (4 x, from bonusSprite.png)
 #include "coins_png.h"       // coin spin frames frozen enemies turn into (7 x, coins.png)
 #include "start_png.h"       // "START!" intro: two interlaced halves (start.png)
+#include "powerball_png.h"   // the P power-orb sprite (16x16), tinted per type
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "sprites_full_png.h" // full original sprites atlas (for Jack death frames)
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
@@ -289,6 +290,10 @@ SDL_Texture* g_multTex[6] = {};
 
 // Coin spin frames that P-frozen enemies turn into (from coins.png).
 Sprite g_coinFrames[7];
+
+// Power-orb sprite (PowerBall.png) as a normalised white luminance mask, so it
+// can be colour-modded to any of the 7 power colours.
+Sprite g_powerOrbTex;
 
 // "START!" intro halves (start.png): each carries alternate scanlines of the
 // word, so overlapping them in the centre spells it out. Each half is split into
@@ -637,6 +642,40 @@ void buildSprites(SDL_Renderer* ren) {
         stbi_image_free(tpx);
     } else {
         std::fprintf(stderr, "start sprite decode failed\n");
+    }
+
+    // Power orb (PowerBall.png): turn the magenta "P" ball into a white
+    // luminance mask with full contrast, so a colour-mod recolours it to any of
+    // the 7 power colours (the "P" stays a darker shade of the chosen colour).
+    int ow = 0, oh = 0, oc = 0;
+    stbi_uc* opx = stbi_load_from_memory(powerball_png, (int)powerball_png_len,
+                                         &ow, &oh, &oc, 4);
+    if (opx) {
+        auto lum = [](const stbi_uc* p) {
+            return 0.30f * p[0] + 0.59f * p[1] + 0.11f * p[2];
+        };
+        float lo = 1e9f, hi = -1e9f;                  // contrast range of the ball
+        for (int i = 0; i < ow * oh; ++i)
+            if (opx[i * 4 + 3] > 0) {
+                float L = lum(opx + i * 4);
+                lo = std::min(lo, L); hi = std::max(hi, L);
+            }
+        float span = std::max(1.0f, hi - lo);
+        SDL_Surface* s = SDL_CreateSurface(ow, oh, SDL_PIXELFORMAT_RGBA32);
+        for (int y = 0; y < oh; ++y)
+            for (int x = 0; x < ow; ++x) {
+                const stbi_uc* sp = opx + ((size_t)y * ow + x) * 4;
+                Uint8* dp = (Uint8*)s->pixels + y * s->pitch + x * 4;
+                // Normalise to [70,255] so the "P" reads as a darker shade, not black.
+                float f = (lum(sp) - lo) / span;
+                Uint8 v = (Uint8)(70.0f + 185.0f * f);
+                dp[0] = dp[1] = dp[2] = v; dp[3] = sp[3];
+            }
+        g_powerOrbTex = {ow, oh, texFromSurface(ren, s)};
+        SDL_DestroySurface(s);
+        stbi_image_free(opx);
+    } else {
+        std::fprintf(stderr, "power orb sprite decode failed\n");
     }
 
     // Bird frames: slice the embedded strip into BF_COUNT cells.
@@ -1618,38 +1657,26 @@ void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
 }
 
 // The Power orb: a pulsing, colour-cycling ball. Grab it to freeze the chasers.
+// The 7 Power-orb colours, by family index (matching POWER_POINTS):
+// 0 Red=100, 1 Blue=200, 2 Purple=300, 3 Green=500, 4 Aqua=800, 5 Gold=1200,
+// 6 Silver=2000. The orb's family rotates as Jack acts, so its colour/value
+// changes while it bounces.
+constexpr Color POWER_COLORS[7] = {
+    {235, 30, 45}, {45, 80, 240}, {165, 45, 225}, {45, 205, 65},
+    {40, 215, 215}, {240, 195, 45}, {205, 210, 220}
+};
+
 void drawPowerOrb(SDL_Renderer* r, float x, float y, float t, int family) {
-    // Original Power uses a 7-color table rotated every 0.05s.
-    int step = (int)(std::fmod(t, 0.35f) / 0.05f) % 7;
-    static const Color families[7][7] = {
-        // PowerToColors[1] (blue)
-        {{0, 0, 255}, {34, 34, 255}, {102, 102, 255}, {136, 136, 255},
-         {170, 170, 255}, {204, 204, 255}, {238, 238, 255}},
-        // PowerToColors[2] (red)
-        {{255, 0, 0}, {255, 34, 34}, {255, 68, 68}, {255, 102, 102},
-         {255, 170, 170}, {255, 204, 204}, {255, 238, 238}},
-        // PowerToColors[3] (magenta)
-        {{255, 0, 255}, {255, 34, 255}, {255, 68, 255}, {255, 102, 255},
-         {255, 136, 255}, {255, 170, 255}, {255, 204, 255}},
-        // PowerToColors[4] (green)
-        {{0, 255, 0}, {68, 255, 68}, {102, 255, 102}, {136, 255, 136},
-         {170, 255, 170}, {204, 255, 204}, {238, 255, 238}},
-        // PowerToColors[5] (cyan)
-        {{0, 255, 255}, {68, 255, 255}, {102, 255, 255}, {136, 255, 255},
-         {170, 255, 255}, {204, 255, 255}, {238, 255, 255}},
-        // PowerToColors[6] (yellow)
-        {{255, 255, 0}, {255, 255, 68}, {255, 255, 102}, {255, 255, 136},
-         {255, 255, 170}, {255, 255, 204}, {255, 255, 238}},
-        // PowerToColors[7] (grey)
-        {{153, 153, 153}, {221, 221, 221}, {204, 204, 204}, {221, 221, 221},
-         {204, 204, 204}, {187, 187, 187}, {170, 170, 170}}
-    };
-    static const float ringR[7] = {9.4f, 9.8f, 10.2f, 10.6f, 10.2f, 9.8f, 9.4f};
-    const Color* ringCol = families[(family % 7 + 7) % 7];
-    float rad = ringR[step];
-    setCol(r, ringCol[step]);      fillCircle(r, x, y, rad);
-    setCol(r, {255, 255, 255});    fillCircle(r, x, y, rad * 0.48f);
-    drawTextCentered(r, "P", x, y - 3, 1, ringCol[step]);
+    Color base = POWER_COLORS[(family % 7 + 7) % 7];   // the orb keeps its colour
+    if (g_powerOrbTex.tex) {
+        const float d = ORB_R * 4.8f;                  // ~48px (2x the old size)
+        SDL_FRect dst{x - d / 2, y - d / 2, d, d};
+        double angle = std::fmod(t * 200.0, 360.0);    // spin the shades clockwise
+        SDL_SetTextureColorMod(g_powerOrbTex.tex, base.r, base.g, base.b);
+        SDL_RenderTextureRotated(r, g_powerOrbTex.tex, nullptr, &dst, angle,
+                                 nullptr, SDL_FLIP_NONE);
+        SDL_SetTextureColorMod(g_powerOrbTex.tex, 255, 255, 255);
+    }
 }
 
 // Draw the backdrop the current level's layout calls for (screen is 0-based).

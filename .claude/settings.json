@@ -52,7 +52,8 @@
       "Bash(python3 -c \"from PIL import Image; im=Image.open\\('assets/sprites.png'\\); print\\(im.size, im.mode\\)\")",
       "Bash(xxd -i -n bonus_png assets/bonusSprite.png)",
       "Bash(xxd -i -n coins_png assets/coins.png)",
-      "Bash(xxd -i -n start_png assets/start.png)"
+      "Bash(xxd -i -n start_png assets/start.png)",
+      "Bash(xxd -i -n powerball_png assets/PowerBall.png)"
     ],
     "additionalDirectories": [
       "/tmp",
