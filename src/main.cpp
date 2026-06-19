@@ -138,6 +138,14 @@ enum DeathPhase { DP_NONE, DP_DANCING, DP_FALLING, DP_DEAD, DP_WAIT };
 
 struct Color { Uint8 r, g, b; };
 
+// The 7 Power-orb base colours, by family index (matching POWER_POINTS):
+// 0 Red=100, 1 Blue=200, 2 Purple=300, 3 Green=500, 4 Aqua=800, 5 Gold=1200,
+// 6 Silver=2000. The orb's family rotates as Jack acts, changing colour/value.
+constexpr Color POWER_COLORS[7] = {
+    {235, 30, 45}, {45, 80, 240}, {165, 45, 225}, {45, 205, 65},
+    {40, 215, 215}, {240, 195, 45}, {205, 210, 220}
+};
+
 struct Input { bool left, right, jumpHeld, jumpPressed; };
 
 struct Player {
@@ -291,9 +299,10 @@ SDL_Texture* g_multTex[6] = {};
 // Coin spin frames that P-frozen enemies turn into (from coins.png).
 Sprite g_coinFrames[7];
 
-// Power-orb sprite (PowerBall.png) as a normalised white luminance mask, so it
-// can be colour-modded to any of the 7 power colours.
-Sprite g_powerOrbTex;
+// Power-orb sprite (PowerBall.png) prebaked per colour family [0..6] and per
+// colour-cycle phase [0..3]: each frame recolours the ball's bands with 4
+// shades near the family's base colour, and stepping the phase cycles them.
+Sprite g_orbCycle[7][4];
 
 // "START!" intro halves (start.png): each carries alternate scanlines of the
 // word, so overlapping them in the centre spells it out. Each half is split into
@@ -644,9 +653,11 @@ void buildSprites(SDL_Renderer* ren) {
         std::fprintf(stderr, "start sprite decode failed\n");
     }
 
-    // Power orb (PowerBall.png): turn the magenta "P" ball into a white
-    // luminance mask with full contrast, so a colour-mod recolours it to any of
-    // the 7 power colours (the "P" stays a darker shade of the chosen colour).
+    // Power orb (PowerBall.png): the pinwheel "P" ball. We classify each pixel
+    // into one of 4 bands by luminance, then prebake, for every colour family
+    // and every cycle phase, a recoloured ball whose 4 bands use 4 shades near
+    // the base colour. Stepping the phase at runtime cycles the colours (no
+    // sprite rotation; the orb stays upright).
     int ow = 0, oh = 0, oc = 0;
     stbi_uc* opx = stbi_load_from_memory(powerball_png, (int)powerball_png_len,
                                          &ow, &oh, &oc, 4);
@@ -654,25 +665,34 @@ void buildSprites(SDL_Renderer* ren) {
         auto lum = [](const stbi_uc* p) {
             return 0.30f * p[0] + 0.59f * p[1] + 0.11f * p[2];
         };
-        float lo = 1e9f, hi = -1e9f;                  // contrast range of the ball
+        float lo = 1e9f, hi = -1e9f;                  // luminance range of the ball
         for (int i = 0; i < ow * oh; ++i)
             if (opx[i * 4 + 3] > 0) {
                 float L = lum(opx + i * 4);
                 lo = std::min(lo, L); hi = std::max(hi, L);
             }
         float span = std::max(1.0f, hi - lo);
-        SDL_Surface* s = SDL_CreateSurface(ow, oh, SDL_PIXELFORMAT_RGBA32);
-        for (int y = 0; y < oh; ++y)
-            for (int x = 0; x < ow; ++x) {
-                const stbi_uc* sp = opx + ((size_t)y * ow + x) * 4;
-                Uint8* dp = (Uint8*)s->pixels + y * s->pitch + x * 4;
-                // Normalise to [70,255] so the "P" reads as a darker shade, not black.
-                float f = (lum(sp) - lo) / span;
-                Uint8 v = (Uint8)(70.0f + 185.0f * f);
-                dp[0] = dp[1] = dp[2] = v; dp[3] = sp[3];
+        // Per-pixel band 0..3 (dark -> bright); -1 = transparent.
+        std::vector<int> band((size_t)ow * oh, -1);
+        for (int i = 0; i < ow * oh; ++i)
+            if (opx[i * 4 + 3] > 0)
+                band[i] = std::min(3, (int)((lum(opx + i * 4) - lo) / span * 4.0f));
+        const float bf[4] = {0.50f, 0.68f, 0.84f, 1.0f};   // 4 brightness shades
+        for (int fam = 0; fam < 7; ++fam) {
+            Color bc = POWER_COLORS[fam];
+            for (int ph = 0; ph < 4; ++ph) {
+                SDL_Surface* s = SDL_CreateSurface(ow, oh, SDL_PIXELFORMAT_RGBA32);
+                for (int i = 0; i < ow * oh; ++i) {
+                    Uint8* dp = (Uint8*)s->pixels + i * 4;
+                    if (band[i] < 0) { dp[0] = dp[1] = dp[2] = dp[3] = 0; continue; }
+                    float f = bf[(band[i] + ph) & 3];      // cycle the shade by phase
+                    dp[0] = (Uint8)(bc.r * f); dp[1] = (Uint8)(bc.g * f);
+                    dp[2] = (Uint8)(bc.b * f); dp[3] = 255;
+                }
+                g_orbCycle[fam][ph] = {ow, oh, texFromSurface(ren, s)};
+                SDL_DestroySurface(s);
             }
-        g_powerOrbTex = {ow, oh, texFromSurface(ren, s)};
-        SDL_DestroySurface(s);
+        }
         stbi_image_free(opx);
     } else {
         std::fprintf(stderr, "power orb sprite decode failed\n");
@@ -1212,8 +1232,6 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         return;
     }
     if (p.invuln > 0) p.invuln -= dt;
-    const bool oldOnGround = p.onGround;
-    const float oldVy = p.vy;
 
     // Horizontal movement.
     p.vx = (in.right ? MOVE : 0.0f) - (in.left ? MOVE : 0.0f);
@@ -1293,16 +1311,16 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             if (!g.orbActive && g.freezeTimer <= 0 && g.powerMeter >= POWER_NEEDED) {
                 g.powerMeter -= POWER_NEEDED;
                 g.orbActive = true;
-                g.orbX = b.x;
-                g.orbY = b.y - 18.0f;             // float just above the grabbed bomb
+                g.orbX = LOGW / 2.0f;             // appears at the centre of the
+                g.orbY = LOGH / 2.0f - 16.0f;     // play area (as in the original)
                 g.orbVx = ORB_SPEED * 0.5f;
                 g.orbVy = ORB_SPEED * 0.8660254f;
-                g.orbFamily = 0;
+                g.orbFamily = (int)(g.rng() % 7);   // fixed colour/value for its life
             }
         }
     }
 
-    // Like the original, the orb changes colour family on player actions.
+    // Move the orb, bouncing it around the play area.
     if (g.orbActive) {
         float oldOrbX = g.orbX;
         float oldOrbY = g.orbY;
@@ -1365,11 +1383,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             }
             break;
         }
-
-        bool stepFamily = in.jumpPressed;
-        if (!oldOnGround && p.onGround) stepFamily = true;           // touched platform
-        if (oldVy <= 0.0f && p.vy > 0.0f && !p.onGround) stepFamily = true;  // started falling
-        if (stepFamily) g.orbFamily = (g.orbFamily + 1) % 7;
+        // The orb keeps the colour it spawned with — only its shades cycle.
     }
 
     // Power orb pickup -> freeze every enemy and make them killable for a while.
@@ -1657,25 +1671,14 @@ void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
 }
 
 // The Power orb: a pulsing, colour-cycling ball. Grab it to freeze the chasers.
-// The 7 Power-orb colours, by family index (matching POWER_POINTS):
-// 0 Red=100, 1 Blue=200, 2 Purple=300, 3 Green=500, 4 Aqua=800, 5 Gold=1200,
-// 6 Silver=2000. The orb's family rotates as Jack acts, so its colour/value
-// changes while it bounces.
-constexpr Color POWER_COLORS[7] = {
-    {235, 30, 45}, {45, 80, 240}, {165, 45, 225}, {45, 205, 65},
-    {40, 215, 215}, {240, 195, 45}, {205, 210, 220}
-};
-
 void drawPowerOrb(SDL_Renderer* r, float x, float y, float t, int family) {
-    Color base = POWER_COLORS[(family % 7 + 7) % 7];   // the orb keeps its colour
-    if (g_powerOrbTex.tex) {
-        const float d = ORB_R * 4.8f;                  // ~48px (2x the old size)
-        SDL_FRect dst{x - d / 2, y - d / 2, d, d};
-        double angle = std::fmod(t * 200.0, 360.0);    // spin the shades clockwise
-        SDL_SetTextureColorMod(g_powerOrbTex.tex, base.r, base.g, base.b);
-        SDL_RenderTextureRotated(r, g_powerOrbTex.tex, nullptr, &dst, angle,
-                                 nullptr, SDL_FLIP_NONE);
-        SDL_SetTextureColorMod(g_powerOrbTex.tex, 255, 255, 255);
+    int fam = (family % 7 + 7) % 7;
+    int phase = (int)(t / 0.1f) & 3;                   // cycle the 4 shades ~10/s
+    const Sprite& f = g_orbCycle[fam][phase];
+    if (f.tex) {
+        const float d = f.w * 1.5f;                    // 1.5x the 16px source sprite
+        SDL_FRect dst{x - d / 2, y - d / 2, d, d};     // drawn upright, no rotation
+        SDL_RenderTexture(r, f.tex, nullptr, &dst);
     }
 }
 
