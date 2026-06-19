@@ -148,6 +148,7 @@ struct Popup { float x, y, age = 0.0f; int value = 0; };  // floating score text
 struct Game {
     int   state = TITLE;
     int   score = 0, lives = 3, level = 1, streak = 1, bombsLeft = 0;
+    int   phaseStart = 0;              // total score when the current phase began
     float clearTimer = 0.0f;
     float time = 0.0f;                 // animation clock
     // Power orb / enemy-freeze state.
@@ -800,6 +801,7 @@ void startRound(Game& g) {
     g.mummiesSpawned = 0;
     g.transformIdx = 0;
     g.popups.clear();
+    g.phaseStart = g.score;            // start counting this phase's points fresh
 }
 
 void startGame(Game& g) {
@@ -1483,9 +1485,14 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     fillR(r, 0, 0, SCREEN_W, HUD_H);                 // top strip
     fillR(r, 0, HUD_H + GAME_H, SCREEN_W, HUD_H);    // bottom strip
 
-    // --- Top strip: running score (left) + power gauge (right). ---
-    std::snprintf(buf, sizeof(buf), "SCORE %06d", g.score);
-    drawText(r, buf, 3, 4, 1, {255, 255, 255});
+    // --- Top strip: current-phase points (left) + power gauge (right). ---
+    // SIDE-ONE label (yellow) over the points earned in the current phase
+    // (white), stacked two rows in the top-left corner.
+    const float sideX = 3.0f;
+    drawText(r, "SIDE-ONE", sideX, 1, 1, {255, 230, 60});
+    std::snprintf(buf, sizeof(buf), "%d", g.score - g.phaseStart);  // no leading 0s
+    const float sideRight = sideX + textWidth("SIDE-ONE", 1);
+    drawText(r, buf, sideRight - textWidth(buf, 1), 9, 1, {255, 255, 255});
     {
         // POWER gauge — fills as bombs are caught; a full bar spawns a P orb.
         float frac = std::min(g.powerMeter / POWER_NEEDED, 1.0f);
@@ -1510,10 +1517,12 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     std::snprintf(buf, sizeof(buf), "-%d-", g.level);
     drawTextCentered(r, buf, 132, l2, 1, {255, 255, 255});
 
-    // HI-SCORE (yellow) over the current score (white), at the right.
+    // HI-SCORE (yellow) over the current score (white), at the right. The
+    // score has no leading zeros and is right-aligned under the label.
     drawTextCentered(r, "HI-SCORE", 192, l1, 1, {255, 230, 60});
-    std::snprintf(buf, sizeof(buf), "%06d", g.score);
-    drawTextCentered(r, buf, 192, l2, 1, {255, 255, 255});
+    const float hiRight = 192 + textWidth("HI-SCORE", 1) / 2.0f;
+    std::snprintf(buf, sizeof(buf), "%d", g.score);
+    drawText(r, buf, hiRight - textWidth(buf, 1), l2, 1, {255, 255, 255});
 }
 
 void render(SDL_Renderer* r, const Game& g) {
