@@ -50,6 +50,8 @@
 #include "jack_png.h"        // Jack animation frames (15 x 16x15) from the original
 #include "bird_png.h"        // bird enemy flap frames (9 x 16x16) from the original
 #include "mummy_png.h"       // mummy enemy frames (8 x 16x16) from the original
+#include "bonus_png.h"       // bonus "B" coin spin frames (4 x, from bonusSprite.png)
+#include "coins_png.h"       // coin spin frames frozen enemies turn into (7 x, coins.png)
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "sprites_full_png.h" // full original sprites atlas (for Jack death frames)
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
@@ -102,7 +104,7 @@ constexpr float ORB_SPEED = 60.0f;      // moving Power orb speed (world px/s)
 constexpr int   BONUS_LIMIT  = 5000;    // score per bonus-B opportunity
 constexpr int   BONUS_POINTS = 1000;    // base value of a caught B coin
 constexpr int   MAX_MULT     = 5;       // multiplier cap
-constexpr float BONUS_W = 13.0f, BONUS_H = 13.0f;
+constexpr float BONUS_W = 26.0f, BONUS_H = 26.0f;   // drawn 2x the 13px frame
 constexpr float BONUS_SPEED = 45.0f;    // horizontal patrol speed (world px/s)
 constexpr float ORB_R = 10.0f;          // Power orb collision / bounce radius
 constexpr float DEATH_DANCE_TOTAL = 0.5f; // bj_dancing duration (3 frames)
@@ -276,6 +278,9 @@ Sprite g_sprites[SP_COUNT];
 // the "x" box, 1..5 are the digits) — cropped from the full atlas in loadAssets.
 Sprite g_bonusFrames[4];
 SDL_Texture* g_multTex[6] = {};
+
+// Coin spin frames that P-frozen enemies turn into (from coins.png).
+Sprite g_coinFrames[7];
 
 // Jack's animation frames, mirroring the original game (bombjack-resources):
 // an idle pose, a 4-frame walk cycle per direction, and directional flying
@@ -527,18 +532,6 @@ void buildSprites(SDL_Renderer* ren) {
         }
         buildFont(ren, atlas);   // the white glyph rows live in this same atlas
 
-        // Bonus "B" coin spin frames (sprites.json "bonus_S", y=114).
-        static const int bonusRect[4][4] = {
-            {78, 114, 13, 13}, {98, 114, 12, 13}, {117, 114, 7, 13}, {130, 114, 12, 13}
-        };
-        for (int i = 0; i < 4; ++i) {
-            SDL_Surface* f = SDL_CreateSurface(bonusRect[i][2], bonusRect[i][3],
-                                               SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{bonusRect[i][0], bonusRect[i][1], bonusRect[i][2], bonusRect[i][3]};
-            SDL_BlitSurface(atlas, &src, f, nullptr);
-            g_bonusFrames[i] = {bonusRect[i][2], bonusRect[i][3], texFromSurface(ren, f)};
-            SDL_DestroySurface(f);
-        }
         // Boxed multiplier indicators (sprites.json "multiplier", y=194): the
         // "x" box then digits 1..5, each 12x12.
         static const int multX[6] = {8, 24, 44, 64, 84, 104};
@@ -553,6 +546,50 @@ void buildSprites(SDL_Renderer* ren) {
         stbi_image_free(spx);
     } else {
         std::fprintf(stderr, "full sprites atlas decode failed\n");
+    }
+
+    // Bonus "B" coin: 4 spin frames from the dedicated bonusSprite.png strip.
+    int bw = 0, bh = 0, bc = 0;
+    stbi_uc* bpx = stbi_load_from_memory(bonus_png, (int)bonus_png_len,
+                                         &bw, &bh, &bc, 4);
+    if (bpx) {
+        SDL_Surface* strip =
+            SDL_CreateSurfaceFrom(bw, bh, SDL_PIXELFORMAT_RGBA32, bpx, bw * 4);
+        static const int bonusRect[4][4] = {   // x, y, w, h within the strip
+            {3, 1, 13, 13}, {23, 1, 12, 13}, {42, 1, 7, 13}, {55, 1, 12, 13}
+        };
+        for (int i = 0; i < 4; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(bonusRect[i][2], bonusRect[i][3],
+                                               SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{bonusRect[i][0], bonusRect[i][1], bonusRect[i][2], bonusRect[i][3]};
+            SDL_BlitSurface(strip, &src, f, nullptr);
+            g_bonusFrames[i] = {bonusRect[i][2], bonusRect[i][3], texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+        }
+        SDL_DestroySurface(strip);
+        stbi_image_free(bpx);
+    } else {
+        std::fprintf(stderr, "bonus sprite decode failed\n");
+    }
+
+    // Coin frames (coins.png): 7 cells, 12x12, what frozen enemies become.
+    int cw = 0, ch = 0, cc = 0;
+    stbi_uc* cpx = stbi_load_from_memory(coins_png, (int)coins_png_len,
+                                         &cw, &ch, &cc, 4);
+    if (cpx) {
+        SDL_Surface* strip =
+            SDL_CreateSurfaceFrom(cw, ch, SDL_PIXELFORMAT_RGBA32, cpx, cw * 4);
+        for (int i = 0; i < 7; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(12, 12, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{1 + i * 14, 1, 12, 12};   // frames at x=1,15,...,85
+            SDL_BlitSurface(strip, &src, f, nullptr);
+            g_coinFrames[i] = {12, 12, texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+        }
+        SDL_DestroySurface(strip);
+        stbi_image_free(cpx);
+    } else {
+        std::fprintf(stderr, "coin sprite decode failed\n");
     }
 
     // Bird frames: slice the embedded strip into BF_COUNT cells.
@@ -1463,8 +1500,8 @@ SpriteId enemySprite(const Enemy& e, float t, float& w, float& h) {
 
 // The bird flaps through a 3-frame cycle for its current heading. Its body
 // keeps its natural (grey) colours; only the eyes pulse red, mirroring the
-// original (bird.lua). Frozen birds get a blue tint instead.
-void drawBird(SDL_Renderer* r, const Enemy& e, float t, bool frozen) {
+// original (bird.lua).
+void drawBird(SDL_Renderer* r, const Enemy& e, float t) {
     int step = (int)(t / BIRD_FLAP_FRAME) % 3;
     int base;
     if (std::fabs(e.vx) >= std::fabs(e.vy))
@@ -1476,18 +1513,13 @@ void drawBird(SDL_Renderer* r, const Enemy& e, float t, bool frozen) {
     if (!body) return;
     const float w = 26.0f, h = 24.0f;
     SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
-    if (frozen) {
-        drawTexTinted(r, body, dst, false, 90, 150, 255);
-        if (eye) drawTexTinted(r, eye, dst, false, 90, 150, 255);
-    } else {
-        drawTexTinted(r, body, dst, false, 255, 255, 255);
-        if (eye) drawTexTinted(r, eye, dst, false, eyePulse(t), 0, 0);
-    }
+    drawTexTinted(r, body, dst, false, 255, 255, 255);
+    if (eye) drawTexTinted(r, eye, dst, false, eyePulse(t), 0, 0);
 }
 
 // The mummy walks a 3-frame cycle (directional), with distinct idle and falling
 // poses, mirroring the original (mummy.lua). Body keeps its colours; eyes pulse.
-void drawMummy(SDL_Renderer* r, const Enemy& e, float t, bool frozen) {
+void drawMummy(SDL_Renderer* r, const Enemy& e, float t) {
     int frame;
     if (e.phase == EP_FALL) {
         frame = MF_FALL;
@@ -1502,13 +1534,8 @@ void drawMummy(SDL_Renderer* r, const Enemy& e, float t, bool frozen) {
     if (!body) return;
     const float w = 26.0f, h = 28.0f;
     SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
-    if (frozen) {
-        drawTexTinted(r, body, dst, false, 90, 150, 255);
-        if (eye) drawTexTinted(r, eye, dst, false, 90, 150, 255);
-    } else {
-        drawTexTinted(r, body, dst, false, 255, 255, 255);
-        if (eye) drawTexTinted(r, eye, dst, false, eyePulse(t), 0, 0);
-    }
+    drawTexTinted(r, body, dst, false, 255, 255, 255);
+    if (eye) drawTexTinted(r, eye, dst, false, eyePulse(t), 0, 0);
 }
 
 void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
@@ -1516,15 +1543,22 @@ void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
     // Mummies flash white as they pop in; flyers blink as the freeze wears off.
     if (e.phase == EP_APPEAR && std::fmod(t, 0.12f) < 0.06f) return;
     if (frozen && freezeTimer < 1.0f && std::fmod(t, 0.16f) < 0.08f) return;
-    if (e.kind == EK_BIRD)  { drawBird(r, e, t, frozen);  return; }
-    if (e.kind == EK_MUMMY) { drawMummy(r, e, t, frozen); return; }
+    if (frozen) {
+        // Grabbing the P turns the chasers into spinning collectible coins.
+        const Sprite& c = g_coinFrames[(int)(t * 10.0f) % 7];
+        if (c.tex) {
+            const float w = 24.0f, h = 24.0f;
+            SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
+            SDL_RenderTexture(r, c.tex, nullptr, &dst);
+        }
+        return;
+    }
+    if (e.kind == EK_BIRD)  { drawBird(r, e, t);  return; }
+    if (e.kind == EK_MUMMY) { drawMummy(r, e, t); return; }
     float w, h;
     SpriteId id = enemySprite(e, t, w, h);
     bool flip = e.vx < 0;
-    SDL_Texture* tex = g_sprites[id].tex;
-    if (frozen) SDL_SetTextureColorMod(tex, 90, 150, 255);   // frozen blue tint
     drawSprite(r, id, e.x - w / 2, e.y - h / 2, w, h, flip);
-    if (frozen) SDL_SetTextureColorMod(tex, 255, 255, 255);
 }
 
 // The Power orb: a pulsing, colour-cycling ball. Grab it to freeze the chasers.
@@ -1676,12 +1710,12 @@ void render(SDL_Renderer* r, const Game& g) {
 
     if (g.orbActive) drawPowerOrb(r, g.orbX, g.orbY, g.time, g.orbFamily);
 
-    // Bonus "B" coin, spinning through its four frames.
+    // Bonus "B" coin, spinning through its four frames (drawn at 2x).
     if (g.bonusActive) {
         const Sprite& f = g_bonusFrames[(int)(g.bonusAnim * 12.0f) % 4];
         if (f.tex) {
-            SDL_FRect dst{g.bonusX - f.w / 2.0f, g.bonusY - f.h / 2.0f,
-                          (float)f.w, (float)f.h};
+            SDL_FRect dst{g.bonusX - f.w, g.bonusY - f.h,
+                          f.w * 2.0f, f.h * 2.0f};
             SDL_RenderTexture(r, f.tex, nullptr, &dst);
         }
     }

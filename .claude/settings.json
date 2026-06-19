@@ -49,7 +49,9 @@
       "Bash(sed -n '/SpriteId enemySprite/,/^}/p' /home/marti/proy/bombjack/src/main.cpp)",
       "Bash(sed -n '/void drawEnemy/,/^}/p' /home/marti/proy/bombjack/src/main.cpp)",
       "Bash(python3 -c \"from PIL import Image; im=Image.open\\('/tmp/mummy.png'\\); im=im.resize\\(\\(im.width*5,im.height*5\\),Image.NEAREST\\); im.save\\('/tmp/mummy_big.png'\\)\")",
-      "Bash(python3 -c \"from PIL import Image; im=Image.open\\('assets/sprites.png'\\); print\\(im.size, im.mode\\)\")"
+      "Bash(python3 -c \"from PIL import Image; im=Image.open\\('assets/sprites.png'\\); print\\(im.size, im.mode\\)\")",
+      "Bash(xxd -i -n bonus_png assets/bonusSprite.png)",
+      "Bash(xxd -i -n coins_png assets/coins.png)"
     ],
     "additionalDirectories": [
       "/tmp",
