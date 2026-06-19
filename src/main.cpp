@@ -95,6 +95,15 @@ constexpr float CLEAR_TIME  = 1.6f;     // round-clear banner duration (s)
 constexpr float FREEZE_TIME = 5.0f;     // enemy freeze after grabbing the P orb
 constexpr float POWER_NEEDED = 8.0f;    // lit-bomb "charge" needed to spawn a P orb
 constexpr float ORB_SPEED = 60.0f;      // moving Power orb speed (world px/s)
+// Bonus "B" coin: every BONUS_LIMIT points of score one appears; catching it
+// bumps the points multiplier x1 -> x5 (capped). Mirrors the reference game's
+// score.lua (BONUS_LIMIT=5000, multiplier resets each level). The coin patrols
+// a platform until grabbed.
+constexpr int   BONUS_LIMIT  = 5000;    // score per bonus-B opportunity
+constexpr int   BONUS_POINTS = 1000;    // base value of a caught B coin
+constexpr int   MAX_MULT     = 5;       // multiplier cap
+constexpr float BONUS_W = 13.0f, BONUS_H = 13.0f;
+constexpr float BONUS_SPEED = 45.0f;    // horizontal patrol speed (world px/s)
 constexpr float ORB_R = 10.0f;          // Power orb collision / bounce radius
 constexpr float DEATH_DANCE_TOTAL = 0.5f; // bj_dancing duration (3 frames)
 constexpr int   DEATH_DANCE_LOOPS = 2;    // bj_dancing repeats
@@ -169,6 +178,13 @@ struct Game {
     float mummyTimer = 0.0f;           // counts up to MUMMY_SPAWN_DELAY
     int   mummiesSpawned = 0;          // mummies dropped this round
     int   transformIdx = 0;            // index into the level's mummy sequence
+    // Bonus "B" coin + points multiplier.
+    int   multiplier = 1;              // x1..x5, multiplies all point gains
+    int   nextBonusScore = BONUS_LIMIT;// next score threshold that spawns a B coin
+    bool  bonusActive = false;         // a B coin is on the field
+    float bonusX = 0.0f, bonusY = 0.0f, bonusVx = 0.0f;
+    float bonusPlatX = 0.0f, bonusPlatW = 0.0f;  // platform the coin patrols
+    float bonusAnim = 0.0f;            // spin-animation clock
     Player p{};
     std::vector<SDL_FRect> platforms;
     std::vector<Bomb>      bombs;
@@ -255,6 +271,11 @@ enum SpriteId {
 
 struct Sprite { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 Sprite g_sprites[SP_COUNT];
+
+// Bonus "B" coin (4-frame spin) and the boxed multiplier indicators (index 0 is
+// the "x" box, 1..5 are the digits) — cropped from the full atlas in loadAssets.
+Sprite g_bonusFrames[4];
+SDL_Texture* g_multTex[6] = {};
 
 // Jack's animation frames, mirroring the original game (bombjack-resources):
 // an idle pose, a 4-frame walk cycle per direction, and directional flying
@@ -505,6 +526,29 @@ void buildSprites(SDL_Renderer* ren) {
                         g_jackDead[i]);
         }
         buildFont(ren, atlas);   // the white glyph rows live in this same atlas
+
+        // Bonus "B" coin spin frames (sprites.json "bonus_S", y=114).
+        static const int bonusRect[4][4] = {
+            {78, 114, 13, 13}, {98, 114, 12, 13}, {117, 114, 7, 13}, {130, 114, 12, 13}
+        };
+        for (int i = 0; i < 4; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(bonusRect[i][2], bonusRect[i][3],
+                                               SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{bonusRect[i][0], bonusRect[i][1], bonusRect[i][2], bonusRect[i][3]};
+            SDL_BlitSurface(atlas, &src, f, nullptr);
+            g_bonusFrames[i] = {bonusRect[i][2], bonusRect[i][3], texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+        }
+        // Boxed multiplier indicators (sprites.json "multiplier", y=194): the
+        // "x" box then digits 1..5, each 12x12.
+        static const int multX[6] = {8, 24, 44, 64, 84, 104};
+        for (int i = 0; i < 6; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(12, 12, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{multX[i], 194, 12, 12};
+            SDL_BlitSurface(atlas, &src, f, nullptr);
+            g_multTex[i] = texFromSurface(ren, f);
+            SDL_DestroySurface(f);
+        }
         SDL_DestroySurface(atlas);
         stbi_image_free(spx);
     } else {
@@ -782,6 +826,30 @@ void resetPlayer(Game& g, bool invuln) {
     g.p.invuln = invuln ? INVULN_TIME : 0.0f;
 }
 
+// Drop a bonus "B" coin onto a random (non-floor) platform; it patrols that
+// platform horizontally until Jack grabs it. Falls back to the floor band if
+// the layout has no platforms (e.g. the California screen).
+void spawnBonus(Game& g) {
+    std::vector<const SDL_FRect*> eligible;
+    for (const SDL_FRect& pl : g.platforms)
+        if (pl.y < FLOOR_TOP - 1.0f) eligible.push_back(&pl);
+
+    if (!eligible.empty()) {
+        const SDL_FRect* pl = eligible[g.rng() % eligible.size()];
+        g.bonusPlatX = pl->x;
+        g.bonusPlatW = pl->w;
+        g.bonusY = pl->y - BONUS_H * 0.5f - 1.0f;
+    } else {
+        g.bonusPlatX = BORDER_SOLID_X;
+        g.bonusPlatW = LOGW - 2 * BORDER_SOLID_X;
+        g.bonusY = FLOOR_TOP - BONUS_H * 0.5f - 1.0f;
+    }
+    g.bonusX = g.bonusPlatX + g.bonusPlatW * 0.5f;
+    g.bonusVx = (g.rng() & 1) ? BONUS_SPEED : -BONUS_SPEED;
+    g.bonusAnim = 0.0f;
+    g.bonusActive = true;
+}
+
 void startRound(Game& g) {
     initPlatforms(g);     // load this round's hand-authored layout
     spawnBombs(g);
@@ -802,6 +870,9 @@ void startRound(Game& g) {
     g.transformIdx = 0;
     g.popups.clear();
     g.phaseStart = g.score;            // start counting this phase's points fresh
+    g.multiplier = 1;                  // the points multiplier resets each level
+    g.bonusActive = false;
+    g.nextBonusScore = (g.score / BONUS_LIMIT + 1) * BONUS_LIMIT;
 }
 
 void startGame(Game& g) {
@@ -1083,6 +1154,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 gain = 100;
                 g.powerMeter += 0.5f;
             }
+            gain *= g.multiplier;
             g.score += gain;
             g.popups.push_back({b.x, b.y - 6, 0.0f, gain});
             // Enough charge spawns a Power orb (once, while none is active).
@@ -1177,9 +1249,37 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             g.killCount = 0;
             int idx = (g.orbFamily % (int)std::size(POWER_POINTS) +
                        (int)std::size(POWER_POINTS)) % (int)std::size(POWER_POINTS);
-            int gain = POWER_POINTS[idx];
+            int gain = POWER_POINTS[idx] * g.multiplier;
             g.score += gain;
             g.popups.push_back({g.orbX, g.orbY, 0.0f, gain});
+        }
+    }
+
+    // Every BONUS_LIMIT points, offer a B coin (while the multiplier can still
+    // grow and the field is clear of one). The threshold always advances so it
+    // never sticks even when no coin is dropped.
+    if (g.score >= g.nextBonusScore) {
+        g.nextBonusScore += BONUS_LIMIT;
+        if (!g.bonusActive && g.multiplier < MAX_MULT && g.freezeTimer <= 0.0f)
+            spawnBonus(g);
+    }
+
+    // Bonus "B" coin: patrol its platform, and on pickup bump the multiplier.
+    if (g.bonusActive) {
+        g.bonusAnim += dt;
+        g.bonusX += g.bonusVx * dt;
+        const float lo = g.bonusPlatX + BONUS_W * 0.5f;
+        const float hi = g.bonusPlatX + g.bonusPlatW - BONUS_W * 0.5f;
+        if (g.bonusX < lo) { g.bonusX = lo; g.bonusVx = std::fabs(g.bonusVx); }
+        if (g.bonusX > hi) { g.bonusX = hi; g.bonusVx = -std::fabs(g.bonusVx); }
+
+        if (g.bonusX > p.x - BONUS_W * 0.5f && g.bonusX < p.x + PW + BONUS_W * 0.5f &&
+            g.bonusY > p.y - BONUS_H * 0.5f && g.bonusY < p.y + PH + BONUS_H * 0.5f) {
+            int gain = BONUS_POINTS * g.multiplier;   // valued at the current x
+            g.score += gain;
+            g.popups.push_back({g.bonusX, g.bonusY - 6, 0.0f, gain});
+            g.multiplier = std::min(g.multiplier + 1, MAX_MULT);   // then it grows
+            g.bonusActive = false;
         }
     }
 
@@ -1230,7 +1330,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         if (frozen) {
             if (touching) {                             // kill the frozen chaser
                 int idx = std::min(g.killCount, (int)(std::size(KILL_POINTS)) - 1);
-                int gain = KILL_POINTS[idx] * g.streak;
+                int gain = KILL_POINTS[idx] * g.streak * g.multiplier;
                 g.score += gain;
                 g.popups.push_back({e.x, e.y - 6, 0.0f, gain});
                 g.killCount++;
@@ -1494,6 +1594,14 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     const float sideRight = sideX + textWidth("SIDE-ONE", 1);
     drawText(r, buf, sideRight - textWidth(buf, 1), 9, 1, {255, 255, 255});
     {
+        // Points multiplier, drawn as the arcade's boxed "x" + digit (x1..x5).
+        int m = std::clamp(g.multiplier, 1, 5);
+        if (g_multTex[0] && g_multTex[m]) {
+            SDL_FRect xbox{96, 2, 12, 12};   SDL_RenderTexture(r, g_multTex[0], nullptr, &xbox);
+            SDL_FRect dbox{108, 2, 12, 12};  SDL_RenderTexture(r, g_multTex[m], nullptr, &dbox);
+        }
+    }
+    {
         // POWER gauge — fills as bombs are caught; a full bar spawns a P orb.
         float frac = std::min(g.powerMeter / POWER_NEEDED, 1.0f);
         const float gx = SCREEN_W - 64;
@@ -1567,6 +1675,16 @@ void render(SDL_Renderer* r, const Game& g) {
         if (!g.bombs[i].collected) drawBomb(r, g.bombs[i], i == lit, g.time);
 
     if (g.orbActive) drawPowerOrb(r, g.orbX, g.orbY, g.time, g.orbFamily);
+
+    // Bonus "B" coin, spinning through its four frames.
+    if (g.bonusActive) {
+        const Sprite& f = g_bonusFrames[(int)(g.bonusAnim * 12.0f) % 4];
+        if (f.tex) {
+            SDL_FRect dst{g.bonusX - f.w / 2.0f, g.bonusY - f.h / 2.0f,
+                          (float)f.w, (float)f.h};
+            SDL_RenderTexture(r, f.tex, nullptr, &dst);
+        }
+    }
 
     bool frozen = g.freezeTimer > 0.0f;
     for (const Enemy& e : g.enemies) drawEnemy(r, e, g.time, frozen, g.freezeTimer);
