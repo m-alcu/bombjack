@@ -177,69 +177,15 @@ struct Game {
 };
 
 // ---------------------------------------------------------------------------
-// 5x7 bitmap font (uppercase + digits + a little punctuation)
+// Bitmap font ripped from the sprite sheet
 // ---------------------------------------------------------------------------
-const std::unordered_map<char, std::array<uint8_t, 7>>& font() {
-    struct Def { char c; const char* rows[7]; };
-    static const Def defs[] = {
-        {'0', {"01110","10001","10011","10101","11001","10001","01110"}},
-        {'1', {"00100","01100","00100","00100","00100","00100","01110"}},
-        {'2', {"01110","10001","00001","00010","00100","01000","11111"}},
-        {'3', {"11111","00010","00100","00010","00001","10001","01110"}},
-        {'4', {"00010","00110","01010","10010","11111","00010","00010"}},
-        {'5', {"11111","10000","11110","00001","00001","10001","01110"}},
-        {'6', {"00110","01000","10000","11110","10001","10001","01110"}},
-        {'7', {"11111","00001","00010","00100","01000","01000","01000"}},
-        {'8', {"01110","10001","10001","01110","10001","10001","01110"}},
-        {'9', {"01110","10001","10001","01111","00001","00010","01100"}},
-        {'A', {"01110","10001","10001","11111","10001","10001","10001"}},
-        {'B', {"11110","10001","10001","11110","10001","10001","11110"}},
-        {'C', {"01110","10001","10000","10000","10000","10001","01110"}},
-        {'D', {"11100","10010","10001","10001","10001","10010","11100"}},
-        {'E', {"11111","10000","10000","11110","10000","10000","11111"}},
-        {'F', {"11111","10000","10000","11110","10000","10000","10000"}},
-        {'G', {"01110","10001","10000","10111","10001","10001","01111"}},
-        {'H', {"10001","10001","10001","11111","10001","10001","10001"}},
-        {'I', {"01110","00100","00100","00100","00100","00100","01110"}},
-        {'J', {"00111","00010","00010","00010","00010","10010","01100"}},
-        {'K', {"10001","10010","10100","11000","10100","10010","10001"}},
-        {'L', {"10000","10000","10000","10000","10000","10000","11111"}},
-        {'M', {"10001","11011","10101","10101","10001","10001","10001"}},
-        {'N', {"10001","11001","11001","10101","10011","10011","10001"}},
-        {'O', {"01110","10001","10001","10001","10001","10001","01110"}},
-        {'P', {"11110","10001","10001","11110","10000","10000","10000"}},
-        {'Q', {"01110","10001","10001","10001","10101","10010","01101"}},
-        {'R', {"11110","10001","10001","11110","10100","10010","10001"}},
-        {'S', {"01111","10000","10000","01110","00001","00001","11110"}},
-        {'T', {"11111","00100","00100","00100","00100","00100","00100"}},
-        {'U', {"10001","10001","10001","10001","10001","10001","01110"}},
-        {'V', {"10001","10001","10001","10001","10001","01010","00100"}},
-        {'W', {"10001","10001","10001","10101","10101","11011","10001"}},
-        {'X', {"10001","10001","01010","00100","01010","10001","10001"}},
-        {'Y', {"10001","10001","01010","00100","00100","00100","00100"}},
-        {'Z', {"11111","00001","00010","00100","01000","10000","11111"}},
-        {' ', {"00000","00000","00000","00000","00000","00000","00000"}},
-        {':', {"00000","00100","00100","00000","00100","00100","00000"}},
-        {'!', {"00100","00100","00100","00100","00100","00000","00100"}},
-        {'-', {"00000","00000","00000","11111","00000","00000","00000"}},
-        {'.', {"00000","00000","00000","00000","00000","00100","00100"}},
-    };
-    static const auto map = [] {
-        std::unordered_map<char, std::array<uint8_t, 7>> m;
-        for (const auto& d : defs) {
-            std::array<uint8_t, 7> g{};
-            for (int r = 0; r < 7; ++r) {
-                uint8_t bits = 0;
-                for (int c = 0; c < 5; ++c)
-                    if (d.rows[r][c] == '1') bits |= (1 << (4 - c));
-                g[r] = bits;
-            }
-            m[d.c] = g;
-        }
-        return m;
-    }();
-    return map;
-}
+// The original Bomb Jack atlas (the embedded sprites_full_png) carries the
+// arcade's 7x7 white glyph set: uppercase A-Z on one row and digits plus a
+// little punctuation on the next. We crop each glyph into its own texture in
+// loadAssets (buildFont) and tint it per draw with a colour mod. Glyphs are 7
+// pixels square with one column of spacing, so the cell advance is 8.
+constexpr int FONT_W = 7, FONT_H = 7, FONT_ADV = 8;
+std::unordered_map<char, SDL_Texture*> g_font;
 
 // ---------------------------------------------------------------------------
 // Drawing helpers
@@ -258,20 +204,20 @@ void fillCircle(SDL_Renderer* r, float cx, float cy, float rad) {
         fillR(r, cx - dx, cy + static_cast<float>(dy), 2 * dx + 1, 1);
     }
 }
-void drawChar(SDL_Renderer* r, char ch, float x, float y, int s) {
-    auto it = font().find(static_cast<char>(std::toupper((unsigned char)ch)));
-    if (it == font().end()) return;
-    for (int row = 0; row < 7; ++row)
-        for (int col = 0; col < 5; ++col)
-            if (it->second[row] & (1 << (4 - col)))
-                fillR(r, x + col * s, y + row * s, (float)s, (float)s);
+// Render one glyph from the ripped font, tinted with colour c. Unknown glyphs
+// (e.g. space) draw nothing; the caller still advances the pen.
+void drawChar(SDL_Renderer* r, char ch, float x, float y, int s, Color c) {
+    auto it = g_font.find(static_cast<char>(std::toupper((unsigned char)ch)));
+    if (it == g_font.end() || !it->second) return;
+    SDL_SetTextureColorMod(it->second, c.r, c.g, c.b);
+    SDL_FRect dst{x, y, (float)FONT_W * s, (float)FONT_H * s};
+    SDL_RenderTexture(r, it->second, nullptr, &dst);
 }
-int textWidth(const char* t, int s) { return (int)std::strlen(t) * 6 * s; }
+int textWidth(const char* t, int s) { return (int)std::strlen(t) * FONT_ADV * s; }
 void drawText(SDL_Renderer* r, const char* t, float x, float y, int s, Color c) {
-    setCol(r, c);
     for (const char* p = t; *p; ++p) {
-        drawChar(r, *p, x, y, s);
-        x += 6 * s;
+        drawChar(r, *p, x, y, s, c);
+        x += FONT_ADV * s;
     }
 }
 void drawTextCentered(SDL_Renderer* r, const char* t, float cx, float y, int s, Color c) {
@@ -405,6 +351,30 @@ static SDL_Texture* texFromSurface(SDL_Renderer* ren, SDL_Surface* s) {
     return t;
 }
 
+// Crop the arcade's white 7x7 glyphs out of the sprite atlas into one tinted
+// texture each. Letters sit on a 12px grid at y=212 (A-Z, ink left-aligned in
+// the cell); digits share the same grid at y=224, with a handful of hand-placed
+// punctuation windows after them.
+static void buildFont(SDL_Renderer* ren, SDL_Surface* atlas) {
+    auto add = [&](char c, int sx, int sy) {
+        SDL_Surface* f = SDL_CreateSurface(FONT_W, FONT_H, SDL_PIXELFORMAT_RGBA32);
+        SDL_Rect src{sx, sy, FONT_W, FONT_H};
+        SDL_BlitSurface(atlas, &src, f, nullptr);
+        g_font[c] = texFromSurface(ren, f);
+        SDL_DestroySurface(f);
+    };
+    const char* letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    for (int i = 0; letters[i]; ++i) add(letters[i], 5 + 12 * i, 212);
+    for (int i = 0; i < 10; ++i) add('0' + i, 5 + 12 * i, 224);
+    // Punctuation isn't on the grid; these windows centre each glyph in its cell.
+    add('\'', 169, 224);
+    add('!', 180, 224);
+    add('.', 190, 224);
+    add('-', 204, 224);
+    add('(', 215, 224);
+    add(')', 224, 224);
+}
+
 // Build an "eye" overlay from a sprite surface: opaque white wherever the
 // source is pure red (255,0,0) — the eye pixels the arcade recolours — and
 // transparent everywhere else. Returns nullptr if the sprite has no eyes.
@@ -533,6 +503,7 @@ void buildSprites(SDL_Renderer* ren) {
             cropJackVar(deadRect[i][0], deadRect[i][1], deadRect[i][2], deadRect[i][3],
                         g_jackDead[i]);
         }
+        buildFont(ren, atlas);   // the white glyph rows live in this same atlas
         SDL_DestroySurface(atlas);
         stbi_image_free(spx);
     } else {
@@ -653,6 +624,35 @@ void drawPlayfieldBorder(SDL_Renderer* r, int screen) {
         fillR(r, x0 + i, y0 + h - 1.0f - i, w - 2.0f * i, 1.0f);          // bottom
         fillR(r, x0 + w - 1.0f - i, y0 + i, 1.0f, h - 2.0f * i);           // right
     }
+}
+
+void drawPlatformShaded(SDL_Renderer* r, const SDL_FRect& pl, int screen) {
+    const auto& pal = borderPaletteForScreen(screen);
+    const int x = (int)std::round(pl.x);
+    const int y = (int)std::round(pl.y);
+    const int w = std::max(1, (int)std::round(pl.w));
+    const int h = std::max(1, (int)std::round(pl.h));
+
+    // Top bright -> bottom dark, matching original platform shading feel.
+    for (int i = 0; i < 8; ++i) {
+        int y0 = y + (h * i) / 8;
+        int y1 = y + (h * (i + 1)) / 8;
+        int bh = std::max(1, y1 - y0);
+        setCol(r, pal[i]);
+        fillR(r, (float)x, (float)y0, (float)w, (float)bh);
+    }
+
+    // Subtle underside accent to reinforce the bottom shadow.
+    setCol(r, pal[7]);
+    fillR(r, (float)x, (float)(y + h - 1), (float)w, 1.0f);
+
+    // Pin exact corner pixels so platforms keep square arcade corners.
+    setCol(r, pal[0]);
+    fillR(r, (float)x, (float)y, 1.0f, 1.0f);
+    fillR(r, (float)(x + w - 1), (float)y, 1.0f, 1.0f);
+    setCol(r, pal[7]);
+    fillR(r, (float)x, (float)(y + h - 1), 1.0f, 1.0f);
+    fillR(r, (float)(x + w - 1), (float)(y + h - 1), 1.0f, 1.0f);
 }
 
 void buildBackground(SDL_Renderer* ren) {
@@ -1485,7 +1485,7 @@ void drawHud(SDL_Renderer* r, const Game& g) {
 
     // --- Top strip: running score (left) + power gauge (right). ---
     std::snprintf(buf, sizeof(buf), "SCORE %06d", g.score);
-    drawText(r, buf, 3, 1, 2, {255, 255, 255});
+    drawText(r, buf, 3, 4, 1, {255, 255, 255});
     {
         // POWER gauge — fills as bombs are caught; a full bar spawns a P orb.
         float frac = std::min(g.powerMeter / POWER_NEEDED, 1.0f);
@@ -1536,7 +1536,7 @@ void render(SDL_Renderer* r, const Game& g) {
         drawTextCentered(r, "PRESS SPACE TO START", SCREEN_W / 2.0f, by + BANNER_H + 14,
                          1, std::fmod(g.time, 1.0f) < 0.5f ? Color{230, 230, 230}
                                                            : Color{120, 120, 120});
-        drawTextCentered(r, "ARROWS MOVE   SPACE JUMP-FLOAT", SCREEN_W / 2.0f,
+        drawTextCentered(r, "ARROWS MOVE   SPACE FLOAT", SCREEN_W / 2.0f,
                          by + BANNER_H + 28, 1, {150, 150, 170});
         drawHud(r, g);
         return;
@@ -1544,9 +1544,11 @@ void render(SDL_Renderer* r, const Game& g) {
 
     drawBackground(r, currentScreen(g));
 
-    // Platforms — tiled girder texture.
-    for (const SDL_FRect& pl : g.platforms)
-        SDL_RenderTextureTiled(r, g_sprites[SP_PLAT].tex, nullptr, 1.0f, &pl);
+    // Platforms — level-coloured shading with darker bottom edge.
+    for (const SDL_FRect& pl : g.platforms) {
+        if (pl.y >= FLOOR_TOP - 1.0f) continue;  // keep floor as collision-only
+        drawPlatformShaded(r, pl, currentScreen(g));
+    }
 
     // Bombs (lit = lowest remaining index).
     int lit = -1;

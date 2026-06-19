@@ -48,7 +48,8 @@
       "Bash(rm -f /tmp/cap /tmp/cap.cpp /tmp/phase*.bmp /tmp/phases.png; echo cleaned)",
       "Bash(sed -n '/SpriteId enemySprite/,/^}/p' /home/marti/proy/bombjack/src/main.cpp)",
       "Bash(sed -n '/void drawEnemy/,/^}/p' /home/marti/proy/bombjack/src/main.cpp)",
-      "Bash(python3 -c \"from PIL import Image; im=Image.open\\('/tmp/mummy.png'\\); im=im.resize\\(\\(im.width*5,im.height*5\\),Image.NEAREST\\); im.save\\('/tmp/mummy_big.png'\\)\")"
+      "Bash(python3 -c \"from PIL import Image; im=Image.open\\('/tmp/mummy.png'\\); im=im.resize\\(\\(im.width*5,im.height*5\\),Image.NEAREST\\); im.save\\('/tmp/mummy_big.png'\\)\")",
+      "Bash(python3 -c \"from PIL import Image; im=Image.open\\('assets/sprites.png'\\); print\\(im.size, im.mode\\)\")"
     ],
     "additionalDirectories": [
       "/tmp",
