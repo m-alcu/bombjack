@@ -190,6 +190,7 @@ struct Game {
     float orbVx = 0.0f, orbVy = 0.0f;
     int   orbFamily = 0;               // 0..6 PowerToColors family index
     float freezeTimer = 0.0f;          // >0 while enemies are frozen & killable
+    Color freezeColor{200, 205, 220};  // colour of the grabbed orb (tints Jack)
     int   killCount = 0;               // enemies killed in the current freeze
     bool  playerDying = false;
     float deathTimer = 0.0f;
@@ -333,7 +334,7 @@ enum JackFrame {
 constexpr int JACK_FW = 16, JACK_FH = 15;     // native frame size in the strip
 constexpr float JACK_WALK_FRAME = 0.125f;     // 0.5s / 4 frames (arcade rate)
 SDL_Texture* g_jackTex[JF_COUNT] = {};
-SDL_Texture* g_jackSilver[JF_COUNT] = {};   // silver/grey Jack, shown during the freeze
+SDL_Texture* g_jackTint[JF_COUNT] = {};     // desaturated Jack, colour-modded during the freeze
 
 struct JackVarFrame { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 JackVarFrame g_jackDance[3] = {};
@@ -528,18 +529,18 @@ void buildSprites(SDL_Renderer* ren) {
             SDL_Rect src{i * JACK_FW, 0, JACK_FW, JACK_FH};
             SDL_BlitSurface(strip, &src, f, nullptr);
             g_jackTex[i] = texFromSurface(ren, f);
-            // Silver/grey twin: desaturate to luminance, tint a cool silver.
+            // Desaturated white twin: a colour-mod tints it to the grabbed orb's
+            // colour during the freeze, preserving Jack's shading.
             SDL_Surface* sv = SDL_CreateSurface(JACK_FW, JACK_FH, SDL_PIXELFORMAT_RGBA32);
             for (int y = 0; y < JACK_FH; ++y)
                 for (int x = 0; x < JACK_FW; ++x) {
                     const Uint8* sp = (const Uint8*)f->pixels + y * f->pitch + x * 4;
                     Uint8* dp = (Uint8*)sv->pixels + y * sv->pitch + x * 4;
                     float L = 0.30f * sp[0] + 0.59f * sp[1] + 0.11f * sp[2];
-                    float l = std::min(1.0f, L / 255.0f + 0.25f);   // lift toward bright silver
-                    dp[0] = (Uint8)(l * 200); dp[1] = (Uint8)(l * 208);
-                    dp[2] = (Uint8)(l * 225); dp[3] = sp[3];
+                    float l = std::min(1.0f, L / 255.0f + 0.25f);   // lift toward bright
+                    dp[0] = dp[1] = dp[2] = (Uint8)(l * 255); dp[3] = sp[3];
                 }
-            g_jackSilver[i] = texFromSurface(ren, sv);
+            g_jackTint[i] = texFromSurface(ren, sv);
             SDL_DestroySurface(sv);
             SDL_DestroySurface(f);
         }
@@ -1508,6 +1509,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             g.killCount = 0;
             int idx = (g.orbFamily % (int)std::size(POWER_POINTS) +
                        (int)std::size(POWER_POINTS)) % (int)std::size(POWER_POINTS);
+            g.freezeColor = POWER_COLORS[idx];   // Jack takes the orb's colour
             int gain = POWER_POINTS[idx] * g.multiplier;
             g.score += gain;
             g.popups.push_back({g.orbX, g.orbY, 0.0f, gain});
@@ -1667,7 +1669,7 @@ void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
 }
 
 void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
-                int deathPhase, int deathFrame, bool frozen) {
+                int deathPhase, int deathFrame, bool frozen, Color freezeColor) {
     if (dying) {
         const JackVarFrame* fr = nullptr;
         if (deathPhase == DP_DANCING) fr = &g_jackDance[std::clamp(deathFrame, 0, 2)];
@@ -1704,9 +1706,14 @@ void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
     // drawn facing the right way, so no horizontal flip is needed.
     const float dw = 26.0f, dh = 28.0f;
     SDL_FRect dst{p.x + PW / 2 - dw / 2, p.y + PH - dh, dw, dh};
-    // Silver Jack while enemies are frozen (from grabbing the Power orb).
-    SDL_Texture* tex = frozen && g_jackSilver[f] ? g_jackSilver[f] : g_jackTex[f];
-    if (tex) SDL_RenderTexture(r, tex, nullptr, &dst);
+    // While enemies are frozen, Jack takes on the grabbed orb's colour.
+    if (frozen && g_jackTint[f]) {
+        SDL_SetTextureColorMod(g_jackTint[f], freezeColor.r, freezeColor.g, freezeColor.b);
+        SDL_RenderTexture(r, g_jackTint[f], nullptr, &dst);
+        SDL_SetTextureColorMod(g_jackTint[f], 255, 255, 255);
+    } else if (g_jackTex[f]) {
+        SDL_RenderTexture(r, g_jackTex[f], nullptr, &dst);
+    }
 }
 
 // Pick the sprite + draw box for an enemy based on its kind and phase.
@@ -1979,7 +1986,8 @@ void render(SDL_Renderer* r, const Game& g) {
 
     bool frozen = g.freezeTimer > 0.0f;
     for (const Enemy& e : g.enemies) drawEnemy(r, e, g.time, frozen, g.freezeTimer);
-    drawPlayer(r, g.p, g.time, g.playerDying, g.deathPhase, g.deathFrame, frozen);
+    drawPlayer(r, g.p, g.time, g.playerDying, g.deathPhase, g.deathFrame, frozen,
+               g.freezeColor);
 
     useScreen(r);
     drawPlayfieldBorder(r, currentScreen(g));
