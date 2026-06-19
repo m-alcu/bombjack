@@ -52,6 +52,7 @@
 #include "mummy_png.h"       // mummy enemy frames (8 x 16x16) from the original
 #include "bonus_png.h"       // bonus "B" coin spin frames (4 x, from bonusSprite.png)
 #include "coins_png.h"       // coin spin frames frozen enemies turn into (7 x, coins.png)
+#include "start_png.h"       // "START!" intro: two interlaced halves (start.png)
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "sprites_full_png.h" // full original sprites atlas (for Jack death frames)
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
@@ -106,6 +107,11 @@ constexpr int   BONUS_POINTS = 1000;    // base value of a caught B coin
 constexpr int   MAX_MULT     = 5;       // multiplier cap
 constexpr float BONUS_W = 26.0f, BONUS_H = 26.0f;   // drawn 2x the 13px frame
 constexpr float BONUS_SPEED = 45.0f;    // horizontal patrol speed (world px/s)
+// "START!" intro: two interlaced halves slide in from the screen edges, meet in
+// the centre, and hold briefly. Plays at every phase start and on a new life.
+constexpr float START_SLIDE = 0.55f;    // slide-in duration (s)
+constexpr float START_HOLD  = 0.65f;    // centre hold duration (s)
+constexpr float START_TOTAL = START_SLIDE + START_HOLD;
 constexpr float ORB_R = 10.0f;          // Power orb collision / bounce radius
 constexpr float DEATH_DANCE_TOTAL = 0.5f; // bj_dancing duration (3 frames)
 constexpr int   DEATH_DANCE_LOOPS = 2;    // bj_dancing repeats
@@ -187,6 +193,7 @@ struct Game {
     float bonusX = 0.0f, bonusY = 0.0f, bonusVx = 0.0f;
     float bonusPlatX = 0.0f, bonusPlatW = 0.0f;  // platform the coin patrols
     float bonusAnim = 0.0f;            // spin-animation clock
+    float startAnim = 0.0f;            // >0 while the "START!" intro plays
     Player p{};
     std::vector<SDL_FRect> platforms;
     std::vector<Bomb>      bombs;
@@ -281,6 +288,10 @@ SDL_Texture* g_multTex[6] = {};
 
 // Coin spin frames that P-frozen enemies turn into (from coins.png).
 Sprite g_coinFrames[7];
+
+// "START!" intro halves (start.png): each carries alternate scanlines of the
+// word, so overlapping them in the centre spells it out.
+Sprite g_startLeft, g_startRight;
 
 // Jack's animation frames, mirroring the original game (bombjack-resources):
 // an idle pose, a 4-frame walk cycle per direction, and directional flying
@@ -590,6 +601,28 @@ void buildSprites(SDL_Renderer* ren) {
         stbi_image_free(cpx);
     } else {
         std::fprintf(stderr, "coin sprite decode failed\n");
+    }
+
+    // "START!" intro halves (start.png): left at x=2, right at x=62, each 56x14.
+    int tw = 0, th = 0, tc = 0;
+    stbi_uc* tpx = stbi_load_from_memory(start_png, (int)start_png_len,
+                                         &tw, &th, &tc, 4);
+    if (tpx) {
+        SDL_Surface* strip =
+            SDL_CreateSurfaceFrom(tw, th, SDL_PIXELFORMAT_RGBA32, tpx, tw * 4);
+        auto cropHalf = [&](int x0, Sprite& out) {
+            SDL_Surface* f = SDL_CreateSurface(56, th, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{x0, 0, 56, th};
+            SDL_BlitSurface(strip, &src, f, nullptr);
+            out = {56, th, texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+        };
+        cropHalf(2, g_startLeft);
+        cropHalf(62, g_startRight);
+        SDL_DestroySurface(strip);
+        stbi_image_free(tpx);
+    } else {
+        std::fprintf(stderr, "start sprite decode failed\n");
     }
 
     // Bird frames: slice the embedded strip into BF_COUNT cells.
@@ -910,6 +943,7 @@ void startRound(Game& g) {
     g.multiplier = 1;                  // the points multiplier resets each level
     g.bonusActive = false;
     g.nextBonusScore = (g.score / BONUS_LIMIT + 1) * BONUS_LIMIT;
+    g.startAnim = START_TOTAL;          // play the "START!" intro for this phase
 }
 
 void startGame(Game& g) {
@@ -1111,9 +1145,14 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 g.deathPhase = DP_NONE;
                 g.lives--;
                 if (g.lives <= 0) g.state = GAMEOVER;
-                else resetPlayer(g, true);
+                else { resetPlayer(g, true); g.startAnim = START_TOTAL; }  // new life intro
             }
         }
+        return;
+    }
+    // Hold the simulation while the "START!" intro slides in and settles.
+    if (g.startAnim > 0.0f) {
+        g.startAnim -= dt;
         return;
     }
     if (p.invuln > 0) p.invuln -= dt;
@@ -1667,6 +1706,23 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     drawText(r, buf, hiRight - textWidth(buf, 1), l2, 1, {255, 255, 255});
 }
 
+// The "START!" intro: the two interlaced halves slide in from the screen edges
+// and overlap in the centre of the play area to spell the word. Raw screen px.
+void drawStartIntro(SDL_Renderer* r, const Game& g) {
+    if (g.startAnim <= 0.0f || !g_startLeft.tex || !g_startRight.tex) return;
+    const float scale = 2.0f;
+    const float w = 56.0f * scale, h = g_startLeft.h * scale;
+    const float finalX = (SCREEN_W - w) / 2.0f;
+    const float cy = HUD_H + (GAME_H - h) / 2.0f;
+    float elapsed = START_TOTAL - g.startAnim;
+    float p = std::min(elapsed / START_SLIDE, 1.0f);
+    p = 1.0f - (1.0f - p) * (1.0f - p);                   // ease-out
+    float leftX  = -w       + (finalX - (-w))      * p;   // in from the left edge
+    float rightX = SCREEN_W + (finalX - SCREEN_W)  * p;   // in from the right edge
+    SDL_FRect dl{leftX,  cy, w, h};  SDL_RenderTexture(r, g_startLeft.tex,  nullptr, &dl);
+    SDL_FRect dr{rightX, cy, w, h};  SDL_RenderTexture(r, g_startRight.tex, nullptr, &dr);
+}
+
 void render(SDL_Renderer* r, const Game& g) {
     useWorld(r);
 
@@ -1749,6 +1805,7 @@ void render(SDL_Renderer* r, const Game& g) {
     }
 
     useScreen(r);
+    drawStartIntro(r, g);
     drawHud(r, g);
 }
 
