@@ -51,6 +51,9 @@
 #include "bird_png.h"        // bird enemy flap frames (9 x 16x16) from the original
 #include "mummy_png.h"       // mummy enemy frames (8 x 16x16) from the original
 #include "bonus_png.h"       // bonus "B" coin spin frames (4 x, from bonusSprite.png)
+#include "bonuse_png.h"      // bonus "E" (extra life) spin frames (4 x, bonusE.png)
+#include "bonuss_png.h"      // bonus "S" (special) spin frames (4 x, bonusS.png)
+#include "bonustaken_png.h"  // 6-frame flash shown when any bonus is collected
 #include "coins_png.h"       // coin spin frames frozen enemies turn into (7 x, coins.png)
 #include "bombs_png.h"       // bomb sprites (7 x 12x16): frame 0 static, 1-6 lit
 #include "initenemy_png.h"   // 4-frame spawn flash shown before a mummy appears fuse
@@ -120,11 +123,19 @@ constexpr float ORB_SPEED = 60.0f;      // moving Power orb speed (world px/s)
 // bumps the points multiplier x1 -> x5 (capped). Mirrors the reference game's
 // score.lua (BONUS_LIMIT=5000, multiplier resets each level). The coin patrols
 // a platform until grabbed.
-constexpr int   BONUS_LIMIT  = 5000;    // score per bonus-B opportunity
+constexpr int   BONUS_LIMIT  = 5000;    // score per bonus opportunity
 constexpr int   BONUS_POINTS = 1000;    // base value of a caught B coin
 constexpr int   MAX_MULT     = 5;       // multiplier cap
 constexpr float BONUS_W = 26.0f, BONUS_H = 26.0f;   // drawn 2x the 13px frame
 constexpr float BONUS_SPEED = 45.0f;    // horizontal patrol speed (world px/s)
+// Besides the B coin, the spawn slot can carry an E (extra life) or a rare S
+// (special: free life + 5000 pts + skip to the next stage). E appears after
+// enough B coins are collected (sooner if lives were lost); S is a rare roll.
+enum BonusKind { BK_B, BK_E, BK_S };
+constexpr int   BONUS_S_CHANCE = 6;     // % chance a bonus opportunity rolls an S
+constexpr int   BONUS_E_EVERY  = 8;     // B coins between E offers (minus lives lost)
+constexpr int   BONUS_S_POINTS = 5000;  // flat score for catching an S
+constexpr float BONUSTAKEN_FRAME = 0.05f;  // per-frame time of the collect flash
 // "START!" intro: two interlaced halves slide in from the screen edges, meet in
 // the centre, and hold briefly. Plays at every phase start and on a new life.
 // Bump START_SPEED to slow the whole intro down (1.0 = base timing); it scales
@@ -210,6 +221,7 @@ struct Explosion { float x, y, age = 0.0f; };            // bomb-clear burst (3 
 constexpr float EXPL_FRAME = 0.06f;                       // per-frame time (quick)
 struct CoinPickup { float x, y, age = 0.0f; };           // sparkle when a coin is collected
 constexpr float PICKCOIN_FRAME = 0.06f;                   // per-frame time (4 frames)
+struct BonusTaken { float x, y, age = 0.0f; };           // flash when a bonus is collected
 
 struct Game {
     int   state = TITLE;
@@ -236,10 +248,14 @@ struct Game {
     float mummyTimer = 0.0f;           // counts up to MUMMY_SPAWN_DELAY
     int   mummiesSpawned = 0;          // mummies dropped this round
     int   transformIdx = 0;            // index into the level's mummy sequence
-    // Bonus "B" coin + points multiplier.
+    // Bonus coins (B/E/S) + points multiplier.
     int   multiplier = 1;              // x1..x5, multiplies all point gains
-    int   nextBonusScore = BONUS_LIMIT;// next score threshold that spawns a B coin
-    bool  bonusActive = false;         // a B coin is on the field
+    int   nextBonusScore = BONUS_LIMIT;// next score threshold that spawns a bonus
+    bool  bonusActive = false;         // a bonus coin is on the field
+    int   bonusKind = BK_B;            // which letter the active coin shows
+    int   bCoins = 0;                  // B coins collected this game (gates E)
+    int   nextEAt = BONUS_E_EVERY;     // B coins needed before the next E offer
+    int   livesLost = 0;               // deaths so far (brings E forward)
     float bonusX = 0.0f, bonusY = 0.0f, bonusVx = 0.0f;
     float bonusPlatX = 0.0f, bonusPlatW = 0.0f;  // platform the coin patrols
     float bonusAnim = 0.0f;            // spin-animation clock
@@ -251,6 +267,7 @@ struct Game {
     std::vector<Popup>     popups;
     std::vector<Explosion> explosions;
     std::vector<CoinPickup> coinPickups;
+    std::vector<BonusTaken> bonusTakens;
     std::mt19937           rng{std::random_device{}()};
 };
 
@@ -326,9 +343,12 @@ enum SpriteId {
 struct Sprite { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 Sprite g_sprites[SP_COUNT];
 
-// Bonus "B" coin (4-frame spin) and the boxed multiplier indicators (index 0 is
-// the "x" box, 1..5 are the digits) — cropped from the full atlas in loadAssets.
-Sprite g_bonusFrames[4];
+// Bonus coins (4-frame spin each: B/E/S) and the boxed multiplier indicators
+// (index 0 is the "x" box, 1..5 are the digits) — cropped in loadAssets.
+Sprite g_bonusFrames[4];   // B (bonusSprite.png)
+Sprite g_bonusE[4];        // E (bonusE.png)
+Sprite g_bonusS[4];        // S (bonusS.png)
+Sprite g_bonusTaken[6];    // collect flash (bonusTaken.png)
 SDL_Texture* g_multTex[6] = {};
 
 // Coin spin frames that P-frozen enemies turn into (from coins.png).
@@ -612,28 +632,50 @@ void buildSprites(SDL_Renderer* ren) {
         std::fprintf(stderr, "full sprites atlas decode failed\n");
     }
 
-    // Bonus "B" coin: 4 spin frames from the dedicated bonusSprite.png strip.
-    int bw = 0, bh = 0, bc = 0;
-    stbi_uc* bpx = stbi_load_from_memory(bonus_png, (int)bonus_png_len,
-                                         &bw, &bh, &bc, 4);
-    if (bpx) {
+    // Bonus coins (B/E/S): 4 spin frames each, all sharing one strip layout.
+    static const int bonusRect[4][4] = {   // x, y, w, h within the strip
+        {3, 1, 13, 13}, {23, 1, 12, 13}, {42, 1, 7, 13}, {55, 1, 12, 13}
+    };
+    auto loadBonusStrip = [&](const unsigned char* png, unsigned len,
+                              Sprite out[4], const char* name) {
+        int w = 0, h = 0, c = 0;
+        stbi_uc* px = stbi_load_from_memory(png, (int)len, &w, &h, &c, 4);
+        if (!px) { std::fprintf(stderr, "%s decode failed\n", name); return; }
         SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(bw, bh, SDL_PIXELFORMAT_RGBA32, bpx, bw * 4);
-        static const int bonusRect[4][4] = {   // x, y, w, h within the strip
-            {3, 1, 13, 13}, {23, 1, 12, 13}, {42, 1, 7, 13}, {55, 1, 12, 13}
-        };
+            SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, px, w * 4);
         for (int i = 0; i < 4; ++i) {
             SDL_Surface* f = SDL_CreateSurface(bonusRect[i][2], bonusRect[i][3],
                                                SDL_PIXELFORMAT_RGBA32);
             SDL_Rect src{bonusRect[i][0], bonusRect[i][1], bonusRect[i][2], bonusRect[i][3]};
             SDL_BlitSurface(strip, &src, f, nullptr);
-            g_bonusFrames[i] = {bonusRect[i][2], bonusRect[i][3], texFromSurface(ren, f)};
+            out[i] = {bonusRect[i][2], bonusRect[i][3], texFromSurface(ren, f)};
             SDL_DestroySurface(f);
         }
         SDL_DestroySurface(strip);
-        stbi_image_free(bpx);
+        stbi_image_free(px);
+    };
+    loadBonusStrip(bonus_png,  bonus_png_len,  g_bonusFrames, "bonus B sprite");
+    loadBonusStrip(bonuse_png, bonuse_png_len, g_bonusE,      "bonus E sprite");
+    loadBonusStrip(bonuss_png, bonuss_png_len, g_bonusS,      "bonus S sprite");
+
+    // Bonus collect flash (bonusTaken.png): 6 cells, 32x32 at pitch 33 (x=1+i*33).
+    int btw = 0, bth = 0, btc = 0;
+    stbi_uc* btpx = stbi_load_from_memory(bonustaken_png, (int)bonustaken_png_len,
+                                          &btw, &bth, &btc, 4);
+    if (btpx) {
+        SDL_Surface* strip =
+            SDL_CreateSurfaceFrom(btw, bth, SDL_PIXELFORMAT_RGBA32, btpx, btw * 4);
+        for (int i = 0; i < 6; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(32, 32, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{1 + i * 33, 1, 32, 32};
+            SDL_BlitSurface(strip, &src, f, nullptr);
+            g_bonusTaken[i] = {32, 32, texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+        }
+        SDL_DestroySurface(strip);
+        stbi_image_free(btpx);
     } else {
-        std::fprintf(stderr, "bonus sprite decode failed\n");
+        std::fprintf(stderr, "bonus taken sprite decode failed\n");
     }
 
     // Coin frames (coins.png): 7 cells, 12x12, what frozen enemies become.
@@ -1123,7 +1165,8 @@ void resetPlayer(Game& g, bool invuln) {
 // Drop a bonus "B" coin onto a random (non-floor) platform; it patrols that
 // platform horizontally until Jack grabs it. Falls back to the floor band if
 // the layout has no platforms (e.g. the California screen).
-void spawnBonus(Game& g) {
+void spawnBonus(Game& g, int kind) {
+    g.bonusKind = kind;
     std::vector<const SDL_FRect*> eligible;
     for (const SDL_FRect& pl : g.platforms)
         if (pl.y < FLOOR_TOP - 1.0f) eligible.push_back(&pl);
@@ -1165,6 +1208,7 @@ void startRound(Game& g) {
     g.popups.clear();
     g.explosions.clear();
     g.coinPickups.clear();
+    g.bonusTakens.clear();
     g.phaseStart = g.score;            // start counting this phase's points fresh
     g.multiplier = 1;                  // the points multiplier resets each level
     g.bonusActive = false;
@@ -1177,6 +1221,9 @@ void startGame(Game& g) {
     g.lives = 3;
     g.level = 1;
     g.state = PLAYING;
+    g.bCoins = 0;                      // E/S progress is per-game, not per-round
+    g.nextEAt = BONUS_E_EVERY;
+    g.livesLost = 0;
     initPlatforms(g);
     startRound(g);
 }
@@ -1426,6 +1473,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 g.playerDying = false;
                 g.deathPhase = DP_NONE;
                 g.lives--;
+                g.livesLost++;                          // brings the next E forward
                 if (g.lives <= 0) g.state = GAMEOVER;
                 else {                                  // new life: fresh enemies + intro
                     resetPlayer(g, true);
@@ -1625,16 +1673,22 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         }
     }
 
-    // Every BONUS_LIMIT points, offer a B coin (while the multiplier can still
-    // grow and the field is clear of one). The threshold always advances so it
-    // never sticks even when no coin is dropped.
+    // Every BONUS_LIMIT points, offer a bonus coin (while the field is clear of
+    // one). Most are B (capped to the multiplier), but the slot may instead carry
+    // a rare S jackpot or an E extra-life once enough B coins are in. The
+    // threshold always advances so it never sticks even when nothing is dropped.
     if (g.score >= g.nextBonusScore) {
         g.nextBonusScore += BONUS_LIMIT;
-        if (!g.bonusActive && g.multiplier < MAX_MULT && g.freezeTimer <= 0.0f)
-            spawnBonus(g);
+        if (!g.bonusActive && g.freezeTimer <= 0.0f) {
+            int kind = -1;
+            if ((int)(g.rng() % 100) < BONUS_S_CHANCE)           kind = BK_S;
+            else if (g.bCoins + g.livesLost >= g.nextEAt)        kind = BK_E;
+            else if (g.multiplier < MAX_MULT)                    kind = BK_B;
+            if (kind >= 0) spawnBonus(g, kind);
+        }
     }
 
-    // Bonus "B" coin: patrol its platform, and on pickup bump the multiplier.
+    // Active bonus coin: patrol its platform, and apply its effect on pickup.
     if (g.bonusActive) {
         g.bonusAnim += dt;
         g.bonusX += g.bonusVx * dt;
@@ -1645,11 +1699,31 @@ void updatePlaying(Game& g, const Input& in, float dt) {
 
         if (g.bonusX > p.x - BONUS_W * 0.5f && g.bonusX < p.x + PW + BONUS_W * 0.5f &&
             g.bonusY > p.y - BONUS_H * 0.5f && g.bonusY < p.y + PH + BONUS_H * 0.5f) {
-            int gain = BONUS_POINTS * g.multiplier;   // valued at the current x
-            g.score += gain;
-            g.popups.push_back({g.bonusX, g.bonusY - 6, 0.0f, gain});
-            g.multiplier = std::min(g.multiplier + 1, MAX_MULT);   // then it grows
             g.bonusActive = false;
+            g.bonusTakens.push_back({g.bonusX, g.bonusY, 0.0f});   // collect flash
+            switch (g.bonusKind) {
+                case BK_B: {
+                    int gain = BONUS_POINTS * g.multiplier;
+                    g.score += gain;
+                    g.popups.push_back({g.bonusX, g.bonusY - 6, 0.0f, gain});
+                    g.multiplier = std::min(g.multiplier + 1, MAX_MULT);
+                    g.bCoins++;
+                    break;
+                }
+                case BK_E:                                  // extra life
+                    g.lives++;
+                    g.nextEAt += BONUS_E_EVERY;             // raise the bar for the next E
+                    break;
+                case BK_S: {                                // special jackpot + stage skip
+                    int gain = BONUS_S_POINTS * g.multiplier;
+                    g.score += gain;
+                    g.popups.push_back({g.bonusX, g.bonusY - 6, 0.0f, gain});
+                    g.lives++;                              // "free credit" ~= an extra life
+                    g.state = ROUNDCLEAR;                   // advance to the next stage
+                    g.clearTimer = CLEAR_TIME;
+                    break;
+                }
+            }
         }
     }
 
@@ -1664,6 +1738,12 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     for (auto it = g.coinPickups.begin(); it != g.coinPickups.end();) {
         it->age += dt;
         if (it->age >= 4 * PICKCOIN_FRAME) it = g.coinPickups.erase(it); else ++it;
+    }
+
+    // Age out bonus collect flashes (6 quick frames, then gone).
+    for (auto it = g.bonusTakens.begin(); it != g.bonusTakens.end();) {
+        it->age += dt;
+        if (it->age >= 6 * BONUSTAKEN_FRAME) it = g.bonusTakens.erase(it); else ++it;
     }
 
     // Age out clear explosions (3 quick frames, then gone).
@@ -2111,14 +2191,26 @@ void render(SDL_Renderer* r, const Game& g) {
 
     if (g.orbActive) drawPowerOrb(r, g.orbX, g.orbY, g.time, g.orbFamily);
 
-    // Bonus "B" coin, spinning through its four frames (drawn at 2x).
+    // Active bonus coin (B/E/S), spinning through its four frames (drawn at 2x).
     if (g.bonusActive) {
-        const Sprite& f = g_bonusFrames[(int)(g.bonusAnim * 12.0f) % 4];
+        const Sprite* set = g.bonusKind == BK_E ? g_bonusE
+                          : g.bonusKind == BK_S ? g_bonusS : g_bonusFrames;
+        const Sprite& f = set[(int)(g.bonusAnim * 12.0f) % 4];
         if (f.tex) {
             SDL_FRect dst{g.bonusX - f.w, g.bonusY - f.h,
                           f.w * 2.0f, f.h * 2.0f};
             SDL_RenderTexture(r, f.tex, nullptr, &dst);
         }
+    }
+
+    // Bonus collect flashes: play the 6 frames once where a bonus was grabbed.
+    for (const BonusTaken& bt : g.bonusTakens) {
+        int fi = std::min(5, (int)(bt.age / BONUSTAKEN_FRAME));
+        const Sprite& f = g_bonusTaken[fi];
+        if (!f.tex) continue;
+        const float w = f.w * SPRITE_AR, h = (float)f.h;
+        SDL_FRect dst{bt.x - w / 2, bt.y - h / 2, w, h};
+        SDL_RenderTexture(r, f.tex, nullptr, &dst);
     }
 
     bool frozen = g.freezeTimer > 0.0f;

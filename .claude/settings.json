@@ -77,7 +77,11 @@
       "Bash(SDL_VIDEODRIVER=dummy ./bombjack --rendertest)",
       "Bash(grep -oE \"\\\\{[0-9.]+,[0-9.]+,[0-9.]+,16\\\\.0\\\\}\" src/levels_data.h)",
       "Bash(./bombjack --selftest 2000)",
-      "Bash(xxd -i -n pickcoin_png assets/pickCoin.png)"
+      "Bash(xxd -i -n pickcoin_png assets/pickCoin.png)",
+      "Bash(xxd -i -n bonuse_png assets/bonusE.png)",
+      "Bash(xxd -i -n bonuss_png assets/bonusS.png)",
+      "Bash(xxd -i -n bonustaken_png assets/bonusTaken.png)",
+      "Bash(./bombjack --selftest 3000)"
     ],
     "additionalDirectories": [
       "/tmp",
