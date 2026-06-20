@@ -1997,7 +1997,7 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     // ROUND (green) over -N- (white), centered just right of the life icons.
     drawTextCentered(r, "ROUND", 132, l1, 1, {80, 230, 90});
     std::snprintf(buf, sizeof(buf), "-%d-", g.level);
-    drawTextCentered(r, buf, 132, l2, 1, {255, 255, 255});
+    drawTextCentered(r, buf, 132, l2, 1, {60, 235, 255});
 
     // HI-SCORE (yellow) over the current score (white), at the right. The
     // score has no leading zeros and is right-aligned under the label.
@@ -2058,7 +2058,7 @@ void render(SDL_Renderer* r, const Game& g) {
         setCol(r, {0, 0, 0});
         SDL_RenderClear(r);
         const float bx = (SCREEN_W - BANNER_W) / 2.0f;
-        const float by = HUD_H + (GAME_H - BANNER_H) / 2.0f;   // play-area middle
+        const float by = HUD_H + (GAME_H / 4.0f) - (BANNER_H / 2.0f);   // play-area upper middle
         int phase = (int)(g.time / BANNER_ROT) % BANNER_PHASES;
         if (g_bannerTex[phase]) {
             SDL_FRect dst{bx, by, (float)BANNER_W, (float)BANNER_H};
