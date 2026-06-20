@@ -125,10 +125,13 @@ constexpr float BONUS_W = 26.0f, BONUS_H = 26.0f;   // drawn 2x the 13px frame
 constexpr float BONUS_SPEED = 45.0f;    // horizontal patrol speed (world px/s)
 // "START!" intro: two interlaced halves slide in from the screen edges, meet in
 // the centre, and hold briefly. Plays at every phase start and on a new life.
-constexpr float START_SLIDE = 0.55f;    // slide-in duration (s)
-constexpr float START_HOLD  = 0.65f;    // centre hold duration (s)
-constexpr float START_BLACK = 1.0f;     // the background reaches black at t=1s
-constexpr float START_TOTAL = START_SLIDE + START_HOLD;   // 1.2s, then Jack drops
+// Bump START_SPEED to slow the whole intro down (1.0 = base timing); it scales
+// every phase below uniformly.
+constexpr float START_SPEED = 2.0f;     // intro duration multiplier (higher = slower)
+constexpr float START_SLIDE = 0.55f * START_SPEED;   // slide-in duration (s)
+constexpr float START_HOLD  = 0.65f * START_SPEED;   // centre hold duration (s)
+constexpr float START_BLACK = 1.0f  * START_SPEED;   // background reaches black
+constexpr float START_TOTAL = START_SLIDE + START_HOLD;   // then Jack drops
 constexpr float ORB_R = 10.0f;          // Power orb collision / bounce radius
 constexpr float DEATH_DANCE_TOTAL = 0.5f; // bj_dancing duration (3 frames)
 constexpr int   DEATH_DANCE_LOOPS = 2;    // bj_dancing repeats
@@ -1488,12 +1491,14 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         float oldOrbY = g.orbY;
         g.orbX += g.orbVx * dt;
         g.orbY += g.orbVy * dt;
-        if (g.orbX < ORB_R) { g.orbX = ORB_R; g.orbVx = std::fabs(g.orbVx); }
-        if (g.orbX > LOGW - ORB_R) {
-            g.orbX = LOGW - ORB_R;
-            g.orbVx = -std::fabs(g.orbVx);
-        }
-        if (g.orbY < ORB_R) { g.orbY = ORB_R; g.orbVy = std::fabs(g.orbVy); }
+        // Bounce off the inner frame border (same edges the flyers use), not the
+        // raw world edge — otherwise the orb slides behind the frame/banner.
+        const float orbL = BORDER_SOLID_X + ORB_R;
+        const float orbRgt = LOGW - BORDER_SOLID_X - ORB_R;
+        const float orbT = BORDER_SOLID_Y + ORB_R;
+        if (g.orbX < orbL)   { g.orbX = orbL;   g.orbVx = std::fabs(g.orbVx); }
+        if (g.orbX > orbRgt) { g.orbX = orbRgt; g.orbVx = -std::fabs(g.orbVx); }
+        if (g.orbY < orbT)   { g.orbY = orbT;   g.orbVy = std::fabs(g.orbVy); }
         if (g.orbY > FLOOR_TOP - ORB_R) {
             g.orbY = FLOOR_TOP - ORB_R;
             g.orbVy = -std::fabs(g.orbVy);
