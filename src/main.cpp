@@ -214,6 +214,8 @@ struct Enemy {
     float timer  = 0.0f;     // appear countdown
     int   bounces = 0;       // platform direction-changes left before falling
     int   becomes = EK_SPHERE;  // what this mummy transforms into
+    int   dirX = 0, dirY = 0;   // bird: committed compass step toward Jack
+    int   tick = 0;             // bird: frame counter for the re-aim cadence
     Color spawnTint{255, 255, 255};  // random basic colour of the EP_INIT flash
 };
 
@@ -421,6 +423,7 @@ enum BirdFrame {
     BF_COUNT
 };
 constexpr int BIRD_FW = 16, BIRD_FH = 16;
+constexpr int BIRD_DECIDE_FRAMES = 8;         // re-aim heading toward Jack every N frames
 constexpr float BIRD_FLAP_FRAME = 0.1f;       // 0.3s / 3 frames (arcade rate)
 constexpr float BIRD_PULSE_STEP = 0.06f;      // colour-pulse cadence (arcade rate)
 // Red intensity of the eye pulse, looping bright -> black -> bright (BirdToColors).
@@ -1363,8 +1366,14 @@ void updateMummy(Game& g, Enemy& e, float dt) {
     if (e.vy >= 0) {                                   // land on a platform top
         for (const SDL_FRect& pl : g.platforms)
             if (e.x > pl.x && e.x < pl.x + pl.w && feetOld <= pl.y + 1 && feet >= pl.y) {
+                // Only a real landing (arriving from a fall) refreshes the patrol
+                // budget. Gravity re-triggers this check every standing frame, so
+                // resetting unconditionally would pin bounces at max and the mummy
+                // would never run out of turns to walk off an edge.
+                bool landedFromFall = e.phase == EP_FALL;
                 e.y = pl.y - halfH; e.vy = 0;
-                if (pl.y < FLOOR_TOP - 1) e.bounces = levelDef(g).bouncing;
+                if (landedFromFall && pl.y < FLOOR_TOP - 1)
+                    e.bounces = levelDef(g).bouncing;
                 break;
             }
     }
@@ -1395,11 +1404,14 @@ void updateMummy(Game& g, Enemy& e, float dt) {
         if (e.bounces > 0) e.bounces--;
         e.vx = -e.vx;
     } else {
-        float ahead = e.x + (e.vx > 0 ? halfW : -halfW);   // ground under leading foot?
-        if (ahead <= ground->x || ahead >= ground->x + ground->w) {
-            if (e.bounces > 0) { e.vx = -e.vx; e.bounces--; }
-            else { e.phase = EP_FALL; e.x += (e.vx > 0 ? 2.0f : -2.0f); }
-        }
+        float ahead = e.x + (e.vx > 0 ? halfW : -halfW);   // leading foot
+        bool atEdge = ahead <= ground->x || ahead >= ground->x + ground->w;
+        // Patrol: reverse at an edge while bounces remain. Once they're spent,
+        // keep walking off — the centre clears the platform and next frame's
+        // centre-based ground check drops it into EP_FALL. (Reversing on the
+        // foot but falling on the centre matches the arcade; nudging it a couple
+        // of pixels here would just let the centre re-land and reset bounces.)
+        if (atEdge && e.bounces > 0) { e.vx = -e.vx; e.bounces--; }
     }
 }
 
@@ -1446,16 +1458,65 @@ void blockEnemy(Game& g, Enemy& e, float ox, float oy) {
 }
 
 // Transformed chasers: each kind flies and bounces off the walls differently.
+// True if a body of radius r centred at (x,y) overlaps the frame or a platform.
+// Used by the bird to probe a step before committing to it.
+bool flyerBlocked(const Game& g, float r, float x, float y) {
+    const float L = BORDER_SOLID_X + r, R = LOGW - BORDER_SOLID_X - r;
+    const float T = BORDER_SOLID_Y + r, B = FLOOR_TOP - r;
+    if (x < L || x > R || y < T || y > B) return true;
+    for (const SDL_FRect& pl : g.platforms) {
+        if (pl.y >= FLOOR_TOP - 1.0f) continue;        // bottom floor is the B edge
+        if (x + r > pl.x && x - r < pl.x + pl.w &&
+            y + r > pl.y && y - r < pl.y + pl.h) return true;
+    }
+    return false;
+}
+
+// The mechanical bird: an obstacle-aware homing chaser in the arcade style.
+// Every BIRD_DECIDE_FRAMES frames it re-aims a discrete compass heading at Jack.
+// Platforms are solid: each frame it probes its aimed step and, if blocked,
+// slides by dropping the blocked axis, falling back to continuing whatever free
+// direction it was already travelling so it rounds corners deterministically.
+void updateBird(Game& g, Enemy& e, float dt, float pcx, float pcy) {
+    const float s = std::min(72.0f + g.level * 8.0f, 150.0f) * 0.5f;
+
+    if (++e.tick >= BIRD_DECIDE_FRAMES) {
+        e.tick = 0;
+        e.dirX = (pcx > e.x + 2.0f) ? 1 : (pcx < e.x - 2.0f) ? -1 : 0;
+        e.dirY = (pcy > e.y + 2.0f) ? 1 : (pcy < e.y - 2.0f) ? -1 : 0;
+    }
+
+    const float step = s * dt;
+    const int px = (e.vx > 0) - (e.vx < 0);            // last free direction
+    const int py = (e.vy > 0) - (e.vy < 0);
+    // Priority: aimed diagonal, then slide on either aimed axis, then keep the
+    // previous heading (and its single-axis slides) to get around the obstacle.
+    const int cand[][2] = {
+        {e.dirX, e.dirY}, {e.dirX, 0}, {0, e.dirY},
+        {px, py}, {px, 0}, {0, py},
+    };
+    for (const auto& c : cand) {
+        if (c[0] == 0 && c[1] == 0) continue;
+        // Scale a diagonal so the bird covers the same distance per frame as a
+        // straight step — otherwise it moves ~1.41x faster diagonally and
+        // overshoots, drifting off-target instead of homing cleanly on Jack.
+        const float d = (c[0] && c[1]) ? 0.70710678f : 1.0f;
+        const float nx = e.x + c[0] * step * d, ny = e.y + c[1] * step * d;
+        if (!flyerBlocked(g, e.r, nx, ny)) {
+            e.x = nx; e.y = ny;
+            e.vx = c[0] * s; e.vy = c[1] * s;          // record heading (drives the sprite)
+            return;
+        }
+    }
+    e.vx = e.dirX * s; e.vy = e.dirY * s;              // boxed in: hold, keep facing Jack
+}
+
 void updateFlyer(Game& g, Enemy& e, float dt, float pcx, float pcy) {
     float s = FLY_SPEED + g.level * 2.0f;
     switch (e.kind) {
-        case EK_BIRD: {                                // gentle homing, constant speed
-            float dx = pcx - e.x, dy = pcy - e.y, len = std::sqrt(dx*dx + dy*dy) + 1e-3f;
-            float spd = std::sqrt(e.vx*e.vx + e.vy*e.vy) + 1e-3f;
-            e.vx += dx/len * 40*dt; e.vy += dy/len * 40*dt;
-            float n = std::sqrt(e.vx*e.vx + e.vy*e.vy);
-            e.vx = e.vx/n*spd; e.vy = e.vy/n*spd; break;
-        }
+        case EK_BIRD:
+            updateBird(g, e, dt, pcx, pcy);
+            return;                                     // does its own movement + collision
         case EK_SPHERE:                                // homes on X, bounces on Y
             e.vx = std::clamp(e.vx + (pcx > e.x ? 1 : -1) * s*2*dt, -s*0.7f, s*0.7f); break;
         case EK_ORB:                                   // homes on Y, bounces on X
@@ -2093,7 +2154,7 @@ void drawPowerOrb(SDL_Renderer* r, float x, float y, float t, int family) {
     int phase = (int)(t / 0.1f) & 3;                   // cycle the 4 shades ~10/s
     const Sprite& f = g_orbCycle[fam][phase];
     if (f.tex) {
-        const float w = 24.0f * SPRITE_AR, h = 24.0f;  // match the collectible coin size
+        const float w = 28.8f * SPRITE_AR, h = 28.8f;  // 20% larger than the coin
         SDL_FRect dst{x - w / 2, y - h / 2, w, h};      // drawn upright, no rotation
         SDL_RenderTexture(r, f.tex, nullptr, &dst);
     }
@@ -2150,8 +2211,10 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     const float top = HUD_H + GAME_H;                // 240
     const float l1 = top, l2 = top + 8;              // two stacked text rows
 
-    // Lives: up to 7 Jack icons in the bottom-left corner.
-    int shown = std::min(g.lives, 7);
+    // Spare lives: the Jack currently in play isn't counted, so 3 lives shows 2
+    // icons. Up to 7 icons in the bottom-left corner; g.lives may climb higher
+    // internally but only the cap is drawn.
+    int shown = std::clamp(g.lives - 1, 0, 7);
     for (int i = 0; i < shown; ++i) {
         SDL_FRect dst{2.0f + i * 15.0f, top + 1, (float)LIVE_W * 14 / LIVE_H, 14};
         if (g_liveTex) SDL_RenderTexture(r, g_liveTex, nullptr, &dst);
