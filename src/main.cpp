@@ -136,6 +136,7 @@ constexpr int   BONUS_S_CHANCE = 6;     // % chance a bonus opportunity rolls an
 constexpr int   BONUS_E_EVERY  = 8;     // B coins between E offers (minus lives lost)
 constexpr int   BONUS_S_POINTS = 5000;  // flat score for catching an S
 constexpr float BONUSTAKEN_FRAME = 0.05f;  // per-frame time of the collect flash
+constexpr float BONUSTAKEN_SCALE = 1.8f;   // enlarge flash so it wreaths the coin
 // "START!" intro: two interlaced halves slide in from the screen edges, meet in
 // the centre, and hold briefly. Plays at every phase start and on a new life.
 // Bump START_SPEED to slow the whole intro down (1.0 = base timing); it scales
@@ -1383,11 +1384,22 @@ void updateMummy(Game& g, Enemy& e, float dt) {
     e.phase = EP_WALK;
     if (e.vx == 0) e.vx = MUMMY_WALK_SPEED;
     e.x += e.vx * dt;
-    e.x = std::clamp(e.x, BORDER_SOLID_X + e.r, LOGW - BORDER_SOLID_X - e.r);
-    float ahead = e.x + (e.vx > 0 ? halfW : -halfW);   // ground under the leading foot?
-    if (ahead <= ground->x || ahead >= ground->x + ground->w) {
-        if (e.bounces > 0) { e.vx = -e.vx; e.bounces--; }
-        else { e.phase = EP_FALL; e.x += (e.vx > 0 ? 2.0f : -2.0f); }
+    // Frame walls: the body radius (e.r) exceeds the foot half-width, so on a
+    // platform that reaches the frame the leading foot can never pass the edge.
+    // Detect the wall pin directly and turn around there — a wall has no edge to
+    // fall off, so always reverse (consuming a bounce if any are left).
+    const float wallL = BORDER_SOLID_X + e.r, wallR = LOGW - BORDER_SOLID_X - e.r;
+    bool hitWall = (e.vx < 0 && e.x <= wallL) || (e.vx > 0 && e.x >= wallR);
+    e.x = std::clamp(e.x, wallL, wallR);
+    if (hitWall) {
+        if (e.bounces > 0) e.bounces--;
+        e.vx = -e.vx;
+    } else {
+        float ahead = e.x + (e.vx > 0 ? halfW : -halfW);   // ground under leading foot?
+        if (ahead <= ground->x || ahead >= ground->x + ground->w) {
+            if (e.bounces > 0) { e.vx = -e.vx; e.bounces--; }
+            else { e.phase = EP_FALL; e.x += (e.vx > 0 ? 2.0f : -2.0f); }
+        }
     }
 }
 
@@ -1834,9 +1846,15 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             else                    updateFlyer(g, e, dt, pcx, pcy);
         }
 
-        if (e.phase == EP_INIT || e.phase == EP_APPEAR || e.phase == EP_DISAPPEAR) {
+        // Intangible while flashing in / appearing / disappearing. But once
+        // frozen these phases are drawn as collectible coins (only EP_INIT keeps
+        // its spawn flash), so let Jack grab them — otherwise a mummy frozen
+        // mid drop-in shows a coin that can't be taken and never advances.
+        bool intangible = e.phase == EP_INIT ||
+            (!frozen && (e.phase == EP_APPEAR || e.phase == EP_DISAPPEAR));
+        if (intangible) {
             ++it;
-            continue;   // intangible while flashing in / appearing / disappearing
+            continue;
         }
 
         float ex = pcx - e.x, ey = pcy - e.y;
@@ -2273,7 +2291,8 @@ void render(SDL_Renderer* r, const Game& g) {
         int fi = std::min(5, (int)(bt.age / BONUSTAKEN_FRAME));
         const Sprite& f = g_bonusTaken[fi];
         if (!f.tex) continue;
-        const float w = f.w * SPRITE_AR, h = (float)f.h;
+        // Drawn large enough to wreath the 26px bonus coin rather than sit inside it.
+        const float w = f.w * SPRITE_AR * BONUSTAKEN_SCALE, h = f.h * BONUSTAKEN_SCALE;
         SDL_FRect dst{bt.x - w / 2, bt.y - h / 2, w, h};
         SDL_RenderTexture(r, f.tex, nullptr, &dst);
     }
