@@ -2010,8 +2010,8 @@ void drawPowerOrb(SDL_Renderer* r, float x, float y, float t, int family) {
     int phase = (int)(t / 0.1f) & 3;                   // cycle the 4 shades ~10/s
     const Sprite& f = g_orbCycle[fam][phase];
     if (f.tex) {
-        const float d = f.w * 1.5f;                    // 1.5x the 16px source sprite
-        SDL_FRect dst{x - d / 2, y - d / 2, d, d};     // drawn upright, no rotation
+        const float w = 24.0f * SPRITE_AR, h = 24.0f;  // match the collectible coin size
+        SDL_FRect dst{x - w / 2, y - h / 2, w, h};      // drawn upright, no rotation
         SDL_RenderTexture(r, f.tex, nullptr, &dst);
     }
 }
