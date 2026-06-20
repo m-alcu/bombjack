@@ -191,7 +191,7 @@ constexpr Color POWER_COLORS[7] = {
     {40, 215, 200}, {240, 220, 50}, {200, 205, 220}
 };
 
-struct Input { bool left, right, jumpHeld, jumpPressed; };
+struct Input { bool left, right, up, down, jumpHeld, jumpPressed; };
 
 struct Player {
     float x, y, vx, vy;
@@ -216,6 +216,7 @@ struct Enemy {
     int   becomes = EK_SPHERE;  // what this mummy transforms into
     int   dirX = 0, dirY = 0;   // bird: committed compass step toward Jack
     int   tick = 0;             // bird: frame counter for the re-aim cadence
+    float tgtX = 0.0f, tgtY = 0.0f;  // bird: Jack's position sampled at the last re-aim
     Color spawnTint{255, 255, 255};  // random basic colour of the EP_INIT flash
 };
 
@@ -232,6 +233,10 @@ struct Game {
     int   phaseStart = 0;              // total score when the current phase began
     float clearTimer = 0.0f;
     float time = 0.0f;                 // animation clock
+    // GAME OVER sprite slide: stage 0 = move to mid-height, 1 = move to centre,
+    // 2 = hold then return to the title. (goX, goY) are screen pixels.
+    float goX = 0.0f, goY = 0.0f, goTimer = 0.0f;
+    int   goStage = 0;
     // Power orb / enemy-freeze state.
     float powerMeter = 0.0f;           // charge from caught bombs; spawns orb at POWER_NEEDED
     bool  orbActive = false;           // a P orb is on the field
@@ -263,6 +268,8 @@ struct Game {
     float bonusPlatX = 0.0f, bonusPlatW = 0.0f;  // platform the coin patrols
     float bonusAnim = 0.0f;            // spin-animation clock
     float startAnim = 0.0f;            // >0 while the "START!" intro plays
+    bool  birdSpawnPending = false;    // place the bird from the held dir at intro end
+    int   spawnHoldX = 0, spawnHoldY = 0;  // direction latched during the START intro
     Player p{};
     std::vector<SDL_FRect> platforms;
     std::vector<Bomb>      bombs;
@@ -423,7 +430,7 @@ enum BirdFrame {
     BF_COUNT
 };
 constexpr int BIRD_FW = 16, BIRD_FH = 16;
-constexpr int BIRD_DECIDE_FRAMES = 8;         // re-aim heading toward Jack every N frames
+constexpr int BIRD_DECIDE_FRAMES = 250;         // re-aim heading toward Jack every N frames
 constexpr float BIRD_FLAP_FRAME = 0.1f;       // 0.3s / 3 frames (arcade rate)
 constexpr float BIRD_PULSE_STEP = 0.06f;      // colour-pulse cadence (arcade rate)
 // Red intensity of the eye pulse, looping bright -> black -> bright (BirdToColors).
@@ -515,6 +522,28 @@ void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
     SDL_RenderTextureRotated(r, tex, nullptr, &dst, 0.0, nullptr,
                              flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
     SDL_SetTextureColorMod(tex, 255, 255, 255);
+}
+
+// "GAME OVER" sprite (sprites.png x=2,y=155, 34x28), baked as a white mask so it
+// can be colour-cycled. Slides to the screen centre on game over, then the
+// attract title returns.
+constexpr int   GAMEOVER_W = 34, GAMEOVER_H = 28;
+constexpr float GAMEOVER_SLIDE = 110.0f;   // screen px/s the sprite travels
+constexpr float GAMEOVER_HOLD  = 3.0f;     // seconds held at centre before the title
+SDL_Texture* g_gameOverTex = nullptr;
+
+// 3-stage arcade colour cycle (red->yellow->blue->...), used by the GAME OVER
+// sprite. Mirrors guitext.lua getColorFromCycle3.
+Color colorCycle3(float t) {
+    const float CYCLE = 0.4f;                       // seconds per stage
+    int stage = (int)(t / CYCLE);
+    float f = t / CYCLE - (float)stage;             // 0..1 within the stage
+    Uint8 a = (Uint8)(255.0f * f), b = (Uint8)(255.0f * (1.0f - f));
+    switch (((stage % 3) + 3) % 3) {
+        case 0:  return {255, a, 0};                // red   -> yellow
+        case 1:  return {b, b, a};                  // yellow-> blue
+        default: return {a, 0, b};                  // blue  -> red
+    }
 }
 
 void buildSprites(SDL_Renderer* ren) {
@@ -642,6 +671,22 @@ void buildSprites(SDL_Renderer* ren) {
             SDL_Rect src{multX[i], 194, 12, 12};
             SDL_BlitSurface(atlas, &src, f, nullptr);
             g_multTex[i] = texFromSurface(ren, f);
+            SDL_DestroySurface(f);
+        }
+
+        // "GAME OVER" sprite -> white mask (every opaque pixel becomes white)
+        // so the colour cycle can drive it across the full hue range.
+        {
+            SDL_Surface* f = SDL_CreateSurface(GAMEOVER_W, GAMEOVER_H,
+                                               SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{2, 155, GAMEOVER_W, GAMEOVER_H};
+            SDL_BlitSurface(atlas, &src, f, nullptr);
+            for (int y = 0; y < f->h; ++y)
+                for (int x = 0; x < f->w; ++x) {
+                    Uint8* p = (Uint8*)f->pixels + y * f->pitch + x * 4;
+                    if (p[3] > 0) { p[0] = p[1] = p[2] = 255; }
+                }
+            g_gameOverTex = texFromSurface(ren, f);
             SDL_DestroySurface(f);
         }
         SDL_DestroySurface(atlas);
@@ -1207,6 +1252,33 @@ void restartEnemies(Game& g) {
     g.orbActive = false;
 }
 
+// Arcade spawn-forcing: a direction held before Jack starts moving makes the
+// bird appear on the opposite side / corner. Encodes the speedrun table exactly
+// — horizontal is always mirrored; a pure up/down also mirrors vertically, but a
+// diagonal keeps its vertical (e.g. up+right -> top-left). Applied to the first
+// bird once the START intro ends; no hold leaves the random spawn untouched.
+void placeBirdFromHold(Game& g) {
+    int hx = g.spawnHoldX, hy = g.spawnHoldY;
+    if (hx == 0 && hy == 0) return;
+    Enemy* bird = nullptr;
+    for (Enemy& e : g.enemies) if (e.kind == EK_BIRD) { bird = &e; break; }
+    if (!bird) return;
+
+    const float leftX = 60.0f, rightX = LOGW - 60.0f;
+    const float topY  = 70.0f, bottomY = LOGH - 90.0f;
+    const float midX  = LOGW / 2.0f, midY = (topY + bottomY) / 2.0f;
+    float bx = (hx > 0) ? leftX : (hx < 0) ? rightX : midX;   // horizontal: mirror
+    float by;
+    if (hx == 0) by = (hy < 0) ? bottomY : (hy > 0) ? topY    : midY;  // pure vert: mirror
+    else         by = (hy < 0) ? topY    : (hy > 0) ? bottomY : midY;  // diagonal: keep
+
+    float speed = std::min(72.0f + g.level * 8.0f, 150.0f);
+    bird->x = bx; bird->y = by;
+    bird->vx = (bx < midX ? 1.0f : -1.0f) * speed;           // head into the field
+    bird->vy = (by < midY ? 1.0f : -1.0f) * speed * 0.5f;
+    bird->tick = 0; bird->dirX = 0; bird->dirY = 0;
+}
+
 void resetPlayer(Game& g, bool invuln) {
     // Jack starts suspended in mid-air at the centre of the play area — right
     // where the "START!" banner sits — and only begins to fall once the intro
@@ -1270,6 +1342,8 @@ void startRound(Game& g) {
     g.bonusActive = false;
     g.nextBonusScore = (g.score / BONUS_LIMIT + 1) * BONUS_LIMIT;
     g.startAnim = START_TOTAL;          // play the "START!" intro for this phase
+    g.birdSpawnPending = true;          // hold a direction during it to place the bird
+    g.spawnHoldX = g.spawnHoldY = 0;
 }
 
 void startGame(Game& g) {
@@ -1472,43 +1546,49 @@ bool flyerBlocked(const Game& g, float r, float x, float y) {
     return false;
 }
 
-// The mechanical bird: an obstacle-aware homing chaser in the arcade style.
-// Every BIRD_DECIDE_FRAMES frames it re-aims a discrete compass heading at Jack.
-// Platforms are solid: each frame it probes its aimed step and, if blocked,
-// slides by dropping the blocked axis, falling back to continuing whatever free
-// direction it was already travelling so it rounds corners deterministically.
+// The mechanical bird: an obstacle-aware homing chaser. It re-acquires Jack's
+// position every BIRD_DECIDE_FRAMES frames, then flies in a straight line toward
+// that point — heading at Jack's true angle (genuine diagonals) instead of
+// snapping to 8 compass directions, which off 45 degrees degrades into a mostly
+// cardinal staircase. Platforms are solid: if the direct step is blocked it
+// slides along the obstacle on whichever axis still makes progress.
 void updateBird(Game& g, Enemy& e, float dt, float pcx, float pcy) {
     const float s = std::min(72.0f + g.level * 8.0f, 150.0f) * 0.5f;
 
-    if (++e.tick >= BIRD_DECIDE_FRAMES) {
+    if (++e.tick >= BIRD_DECIDE_FRAMES || (e.tgtX == 0.0f && e.tgtY == 0.0f)) {
         e.tick = 0;
-        e.dirX = (pcx > e.x + 2.0f) ? 1 : (pcx < e.x - 2.0f) ? -1 : 0;
-        e.dirY = (pcy > e.y + 2.0f) ? 1 : (pcy < e.y - 2.0f) ? -1 : 0;
+        e.tgtX = pcx; e.tgtY = pcy;                    // re-acquire Jack
     }
 
+    float dx = e.tgtX - e.x, dy = e.tgtY - e.y;
+    float len = std::sqrt(dx * dx + dy * dy);
+    if (len < 1.0f) { e.vx = e.vy = 0.0f; return; }    // basically on target
+    const float ux = dx / len, uy = dy / len;          // unit heading toward Jack
     const float step = s * dt;
-    const int px = (e.vx > 0) - (e.vx < 0);            // last free direction
-    const int py = (e.vy > 0) - (e.vy < 0);
-    // Priority: aimed diagonal, then slide on either aimed axis, then keep the
-    // previous heading (and its single-axis slides) to get around the obstacle.
-    const int cand[][2] = {
-        {e.dirX, e.dirY}, {e.dirX, 0}, {0, e.dirY},
-        {px, py}, {px, 0}, {0, py},
-    };
-    for (const auto& c : cand) {
-        if (c[0] == 0 && c[1] == 0) continue;
-        // Scale a diagonal so the bird covers the same distance per frame as a
-        // straight step — otherwise it moves ~1.41x faster diagonally and
-        // overshoots, drifting off-target instead of homing cleanly on Jack.
-        const float d = (c[0] && c[1]) ? 0.70710678f : 1.0f;
-        const float nx = e.x + c[0] * step * d, ny = e.y + c[1] * step * d;
-        if (!flyerBlocked(g, e.r, nx, ny)) {
-            e.x = nx; e.y = ny;
-            e.vx = c[0] * s; e.vy = c[1] * s;          // record heading (drives the sprite)
+
+    const float nx = e.x + ux * step, ny = e.y + uy * step;
+    if (!flyerBlocked(g, e.r, nx, ny)) {               // direct line is clear
+        e.x = nx; e.y = ny;
+        e.vx = ux * s; e.vy = uy * s;                  // heading drives the sprite
+        return;
+    }
+    // Blocked: slide on a single axis, trying the dominant one first.
+    const int sx = (dx > 0) - (dx < 0), sy = (dy > 0) - (dy < 0);
+    int order[2][2] = {{sx, 0}, {0, sy}};
+    if (std::fabs(dy) > std::fabs(dx)) {
+        order[0][0] = 0;  order[0][1] = sy;
+        order[1][0] = sx; order[1][1] = 0;
+    }
+    for (const auto& m : order) {
+        if (m[0] == 0 && m[1] == 0) continue;
+        const float tx = e.x + m[0] * step, ty = e.y + m[1] * step;
+        if (!flyerBlocked(g, e.r, tx, ty)) {
+            e.x = tx; e.y = ty;
+            e.vx = m[0] * s; e.vy = m[1] * s;
             return;
         }
     }
-    e.vx = e.dirX * s; e.vy = e.dirY * s;              // boxed in: hold, keep facing Jack
+    e.vx = ux * s; e.vy = uy * s;                      // boxed in: hold, keep facing Jack
 }
 
 void updateFlyer(Game& g, Enemy& e, float dt, float pcx, float pcy) {
@@ -1599,11 +1679,21 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 g.deathPhase = DP_NONE;
                 g.lives--;
                 g.livesLost++;                          // brings the next E forward
-                if (g.lives <= 0) g.state = GAMEOVER;
+                if (g.lives <= 0) {
+                    g.state = GAMEOVER;
+                    // Spawn the GAME OVER sprite where Jack died (world -> screen
+                    // px), then it slides to mid-height and on to the centre.
+                    g.goX = (p.x + PW / 2) * (float)GAME_W / LOGW;
+                    g.goY = HUD_H + (p.y + PH / 2) * (float)GAME_H / LOGH;
+                    g.goStage = 0;
+                    g.goTimer = GAMEOVER_HOLD;
+                }
                 else {                                  // new life: fresh enemies + intro
                     resetPlayer(g, true);
                     restartEnemies(g);
                     g.startAnim = START_TOTAL;
+                    g.birdSpawnPending = true;
+                    g.spawnHoldX = g.spawnHoldY = 0;
                 }
             }
         }
@@ -1612,7 +1702,17 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     // Hold the simulation while the "START!" intro slides in and settles.
     if (g.startAnim > 0.0f) {
         g.startAnim -= dt;
+        // Latch the last direction held during the intro: it forces where the
+        // bird appears (and naturally carries into Jack's first move on resume).
+        if (in.left || in.right || in.up || in.down) {
+            g.spawnHoldX = (in.right ? 1 : 0) - (in.left ? 1 : 0);
+            g.spawnHoldY = (in.down ? 1 : 0) - (in.up ? 1 : 0);
+        }
         return;
+    }
+    if (g.birdSpawnPending) {            // intro just ended: place the bird from the hold
+        g.birdSpawnPending = false;
+        placeBirdFromHold(g);
     }
     if (p.invuln > 0) p.invuln -= dt;
     const bool oldOnGround = p.onGround;
@@ -1965,8 +2065,24 @@ void update(Game& g, const Input& in, float dt) {
                 g.state = PLAYING;
             }
             break;
-        case GAMEOVER:
+        case GAMEOVER: {
+            const float cx = SCREEN_W / 2.0f;            // centre x
+            const float cy = SCREEN_H / 2.0f;            // mid-height of the play view
+            const float move = GAMEOVER_SLIDE * dt;
+            if (g.goStage == 0) {                        // first: up/down to mid-height
+                if (g.goY < cy) g.goY = std::min(cy, g.goY + move);
+                else            g.goY = std::max(cy, g.goY - move);
+                if (g.goY == cy) g.goStage = 1;
+            } else if (g.goStage == 1) {                 // then: across to the centre
+                if (g.goX < cx) g.goX = std::min(cx, g.goX + move);
+                else            g.goX = std::max(cx, g.goX - move);
+                if (g.goX == cx) g.goStage = 2;
+            } else {                                     // hold, then back to attract title
+                g.goTimer -= dt;
+                if (g.goTimer <= 0.0f) g.state = TITLE;
+            }
             break;
+        }
     }
 }
 
@@ -2364,7 +2480,7 @@ void render(SDL_Renderer* r, const Game& g) {
     for (const Enemy& e : g.enemies) drawEnemy(r, e, g.time, frozen, g.freezeTimer);
     if (g.state == ROUNDCLEAR)
         drawJackVictory(r, g.p, g.clearTimer);   // victory dance on level finish
-    else
+    else if (g.state != GAMEOVER)                // game over hides Jack; shows the sprite
         drawPlayer(r, g.p, g.time, g.playerDying, g.deathPhase, g.deathFrame, frozen,
                    g.freezeColor);
 
@@ -2388,17 +2504,17 @@ void render(SDL_Renderer* r, const Game& g) {
     if (g.state == ROUNDCLEAR) {
         std::snprintf(buf, sizeof(buf), "ROUND %d CLEAR!", g.level);
         drawTextCentered(r, buf, LOGW / 2.0f, LOGH / 2.0f - 10, 3, {120, 255, 140});
-    } else if (g.state == GAMEOVER) {
-        drawTextCentered(r, "GAME OVER", LOGW / 2.0f, LOGH / 2.0f - 40, 5,
-                         {255, 80, 80});
-        std::snprintf(buf, sizeof(buf), "FINAL SCORE %06d", g.score);
-        drawTextCentered(r, buf, LOGW / 2.0f, LOGH / 2.0f + 20, 2, {255, 255, 255});
-        drawTextCentered(r, "PRESS R TO PLAY AGAIN", LOGW / 2.0f,
-                         LOGH / 2.0f + 60, 2, {200, 200, 200});
     }
 
     useScreen(r);
     drawStartIntro(r, g);
+    // GAME OVER: the colour-cycling sprite slides to the screen centre (screen px).
+    if (g.state == GAMEOVER && g_gameOverTex) {
+        Color c = colorCycle3(g.time);
+        const SDL_FRect dst{g.goX - GAMEOVER_W / 2.0f, g.goY - GAMEOVER_H / 2.0f,
+                            (float)GAMEOVER_W, (float)GAMEOVER_H};
+        drawTexTinted(r, g_gameOverTex, dst, false, c.r, c.g, c.b);
+    }
     drawHud(r, g);
 }
 
@@ -2565,6 +2681,8 @@ int main(int argc, char** argv) {
         Input in{};
         in.left = ks[SDL_SCANCODE_LEFT] || ks[SDL_SCANCODE_A];
         in.right = ks[SDL_SCANCODE_RIGHT] || ks[SDL_SCANCODE_D];
+        in.up = ks[SDL_SCANCODE_UP] || ks[SDL_SCANCODE_W];
+        in.down = ks[SDL_SCANCODE_DOWN] || ks[SDL_SCANCODE_S];
         in.jumpHeld = ks[SDL_SCANCODE_SPACE] || ks[SDL_SCANCODE_UP] ||
                       ks[SDL_SCANCODE_W];
 

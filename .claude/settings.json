@@ -81,7 +81,8 @@
       "Bash(xxd -i -n bonuse_png assets/bonusE.png)",
       "Bash(xxd -i -n bonuss_png assets/bonusS.png)",
       "Bash(xxd -i -n bonustaken_png assets/bonusTaken.png)",
-      "Bash(./bombjack --selftest 3000)"
+      "Bash(./bombjack --selftest 3000)",
+      "Bash(./bombjack --selftest)"
     ],
     "additionalDirectories": [
       "/tmp",
