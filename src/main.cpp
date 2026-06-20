@@ -45,11 +45,7 @@
 #include "stb_image.h"
 #pragma GCC diagnostic pop
 #include "screens_png.h"
-#include "bonus_png.h"       // bonus "B" coin spin frames (4 x, from bonusSprite.png)
-#include "start_png.h"       // "START!" intro: two interlaced halves (start.png)
-#include "pickcoin_png.h"    // 4-frame coin-pickup sparkle (white, tinted yellow)
 // banner/bombs/bonusE/bonusS/bonustaken/explosion now cropped from the atlas
-#include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "sprites_full_png.h" // full original sprites atlas (for Jack death frames)
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
 
@@ -326,8 +322,8 @@ void useScreen(SDL_Renderer* r) {
 }
 
 // ---------------------------------------------------------------------------
-// Sprites — Jack, bombs and enemies are cropped from the embedded official
-// Bomb Jack sprite sheet (sprites_pack.h). Platforms are drawn procedurally
+// Sprites — Jack, bombs and enemies are cropped from the embedded original
+// Bomb Jack atlas (sprites_full_png.h). Platforms are drawn procedurally
 // (drawPlatformShaded), so they need no sprite here. No runtime files.
 // ---------------------------------------------------------------------------
 enum SpriteId {
@@ -368,10 +364,10 @@ Sprite g_explFrames[3];
 // draw can tint them yellow.
 Sprite g_pickCoinFrames[4];
 
-// "START!" intro halves (start.png): each carries alternate scanlines of the
-// word, so overlapping them in the centre spells it out. Each half is split into
-// a background mask (the black box, white so it can be tinted with a cycling
-// arcade colour) and the yellow text layer, indexed [0]=left, [1]=right.
+// "START!" intro halves (atlas "start_left"/"start_right"): each carries
+// alternate scanlines of the word, so overlapping them in the centre spells it
+// out. Each half is split into a background mask (the black box, white so it can
+// be tinted with a cycling arcade colour) and the yellow text layer, [0]=left.
 Sprite g_startBg[2], g_startText[2];
 
 // Jack's animation frames, mirroring the original game (bombjack-resources):
@@ -544,37 +540,9 @@ Color colorCycle3(float t) {
 }
 
 void buildSprites(SDL_Renderer* ren) {
-    // Character sprites: crop each from the embedded official sprite sheet.
-    struct PackRect { SpriteId id; int x, y, w, h; };
-    static const PackRect packRects[] = {
-        {SP_BOMB, 45, 0, 16, 18},
-        {SP_ENEMY1, 61, 0, 18, 16},    {SP_ENEMY2, 79, 0, 18, 16},
-        {SP_MUMMY, 97, 0, 14, 16},     {SP_MUMMY_WALK, 111, 0, 14, 16},
-        {SP_MUMMY_FALL, 125, 0, 14, 16},
-        {SP_SPHERE1, 139, 0, 16, 16},  {SP_SPHERE2, 155, 0, 16, 16},
-        {SP_ORB1, 171, 0, 16, 16},     {SP_ORB2, 187, 0, 16, 16},
-        {SP_HORN1, 203, 0, 16, 16},    {SP_HORN2, 219, 0, 16, 16},
-        {SP_CLUB1, 235, 0, 16, 16},    {SP_CLUB2, 251, 0, 16, 16},
-        {SP_UFO1, 267, 0, 16, 12},     {SP_UFO2, 283, 0, 16, 12},
-    };
-    int w = 0, h = 0, comp = 0;
-    stbi_uc* px = stbi_load_from_memory(spritepack_png, (int)spritepack_png_len,
-                                        &w, &h, &comp, 4);
-    if (px) {
-        SDL_Surface* sheet =
-            SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, px, w * 4);
-        for (const PackRect& pr : packRects) {
-            SDL_Surface* s = SDL_CreateSurface(pr.w, pr.h, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{pr.x, pr.y, pr.w, pr.h};
-            SDL_BlitSurface(sheet, &src, s, nullptr);
-            g_sprites[pr.id] = {pr.w, pr.h, texFromSurface(ren, s)};
-            SDL_DestroySurface(s);
-        }
-        SDL_DestroySurface(sheet);
-        stbi_image_free(px);
-    } else {
-        std::fprintf(stderr, "sprite sheet decode failed\n");
-    }
+    // The transformed chasers (sphere/orb/horn/club/ufo) are cropped from the
+    // shared atlas below, alongside everything else. The bomb/bird/mummy SpriteId
+    // entries are legacy and no longer drawn (those have dedicated loaders).
 
     // Jack's living animation frames are cropped from the shared atlas below.
 
@@ -704,14 +672,37 @@ void buildSprites(SDL_Renderer* ren) {
             SDL_DestroySurface(f);
             return sp;
         };
-        // Bonus E / S spin (4 frames each; sprites.json "bonus_E"/"bonus_S").
+        // Bonus B / E / S spin (4 frames each; sprites.json "bonus_B/E/S"), all
+        // on the y=114 row sharing the same per-frame widths.
+        static const int bonusBX[4] = {78, 98, 117, 130};
         static const int bonusEX[4] = {150, 170, 189, 202};
-        static const int bonusSX[4] = {78, 98, 117, 130};
+        static const int bonusSX[4] = {222, 242, 261, 274};
         static const int bonusW[4]  = {13, 12, 7, 12};
         for (int i = 0; i < 4; ++i) {
-            g_bonusE[i] = cropSprite(bonusEX[i], 114, bonusW[i], 13);
-            g_bonusS[i] = cropSprite(bonusSX[i], 114, bonusW[i], 13);
+            g_bonusFrames[i] = cropSprite(bonusBX[i], 114, bonusW[i], 13);
+            g_bonusE[i]      = cropSprite(bonusEX[i], 114, bonusW[i], 13);
+            g_bonusS[i]      = cropSprite(bonusSX[i], 114, bonusW[i], 13);
         }
+
+        // Transformed chasers (sprites.json sphere/orb/club/ufo/horn): two frames
+        // each for the 2-step animation. drawSprite stretches them to a fixed
+        // on-screen size, so sources only need to match within a type.
+        g_sprites[SP_SPHERE1] = cropSprite(5, 73, 14, 14);   g_sprites[SP_SPHERE2] = cropSprite(85, 73, 14, 14);
+        g_sprites[SP_ORB1]    = cropSprite(185, 74, 14, 13); g_sprites[SP_ORB2]    = cropSprite(245, 74, 14, 13);
+        g_sprites[SP_CLUB1]   = cropSprite(305, 92, 15, 16); g_sprites[SP_CLUB2]   = cropSprite(345, 92, 15, 16);
+        g_sprites[SP_UFO1]    = cropSprite(4, 98, 16, 10);   g_sprites[SP_UFO2]    = cropSprite(64, 98, 16, 10);
+        // Horn frames vary in size; centre two into a common 16x16 cell.
+        auto cropCentered = [&](int x, int y, int w, int h) -> Sprite {
+            SDL_Surface* f = SDL_CreateSurface(16, 16, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{x, y, w, h};
+            SDL_Rect dst{(16 - w) / 2, (16 - h) / 2, w, h};
+            SDL_BlitSurface(atlas, &src, f, &dst);
+            Sprite sp{16, 16, texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+            return sp;
+        };
+        g_sprites[SP_HORN1] = cropCentered(280, 54, 15, 14);
+        g_sprites[SP_HORN2] = cropCentered(318, 52, 11, 16);
         // Bonus collect flash ("power_explosions"): 6 cells of 32x32, pitch 33.
         for (int i = 0; i < 6; ++i) g_bonusTaken[i] = cropSprite(266 + i * 33, 327, 32, 32);
         // Bombs ("bomb" + "bomb_activated"): resting bomb then 6 lit frames, 12x16.
@@ -817,51 +808,18 @@ void buildSprites(SDL_Renderer* ren) {
             SDL_DestroySurface(f);
         }
 
-        SDL_DestroySurface(atlas);
-        stbi_image_free(spx);
-    } else {
-        std::fprintf(stderr, "full sprites atlas decode failed\n");
-    }
-
-    // Bonus coins (B/E/S): 4 spin frames each, all sharing one strip layout.
-    static const int bonusRect[4][4] = {   // x, y, w, h within the strip
-        {3, 1, 13, 13}, {23, 1, 12, 13}, {42, 1, 7, 13}, {55, 1, 12, 13}
-    };
-    auto loadBonusStrip = [&](const unsigned char* png, unsigned len,
-                              Sprite out[4], const char* name) {
-        int w = 0, h = 0, c = 0;
-        stbi_uc* px = stbi_load_from_memory(png, (int)len, &w, &h, &c, 4);
-        if (!px) { std::fprintf(stderr, "%s decode failed\n", name); return; }
-        SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, px, w * 4);
-        for (int i = 0; i < 4; ++i) {
-            SDL_Surface* f = SDL_CreateSurface(bonusRect[i][2], bonusRect[i][3],
-                                               SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{bonusRect[i][0], bonusRect[i][1], bonusRect[i][2], bonusRect[i][3]};
-            SDL_BlitSurface(strip, &src, f, nullptr);
-            out[i] = {bonusRect[i][2], bonusRect[i][3], texFromSurface(ren, f)};
-            SDL_DestroySurface(f);
-        }
-        SDL_DestroySurface(strip);
-        stbi_image_free(px);
-    };
-    loadBonusStrip(bonus_png,  bonus_png_len,  g_bonusFrames, "bonus B sprite");
-    // Bonus E/S, the collect flash, bombs and the explosion are cropped from the
-    // shared atlas in the block above.
-
-    // "START!" intro halves (start.png): left at x=2, right at x=62, each 56x14.
-    int tw = 0, th = 0, tc = 0;
-    stbi_uc* tpx = stbi_load_from_memory(start_png, (int)start_png_len,
-                                         &tw, &th, &tc, 4);
-    if (tpx) {
-        // Split a half into: a white background mask (over the black box pixels,
-        // so it can be colour-cycled) and the yellow text layer.
-        auto splitHalf = [&](int x0, Sprite& bg, Sprite& text) {
-            SDL_Surface* b = SDL_CreateSurface(56, th, SDL_PIXELFORMAT_RGBA32);
-            SDL_Surface* t = SDL_CreateSurface(56, th, SDL_PIXELFORMAT_RGBA32);
-            for (int y = 0; y < th; ++y)
-                for (int x = 0; x < 56; ++x) {
-                    const stbi_uc* sp = tpx + ((size_t)y * tw + (x0 + x)) * 4;
+        // "START!" intro halves ("start_left" 240, "start_right" 300): each
+        // carries alternate scanlines of the word; overlapping them spells it.
+        // Both span y=260..271, so a common 56x12 box aligns them. Each is split
+        // into a white box mask (colour-cycled) and the yellow text layer.
+        auto splitStartHalf = [&](int x0, Sprite& bg, Sprite& text) {
+            const int sw = 56, sh = 12;
+            SDL_Surface* b = SDL_CreateSurface(sw, sh, SDL_PIXELFORMAT_RGBA32);
+            SDL_Surface* t = SDL_CreateSurface(sw, sh, SDL_PIXELFORMAT_RGBA32);
+            for (int y = 0; y < sh; ++y)
+                for (int x = 0; x < sw; ++x) {
+                    const Uint8* sp = (const Uint8*)atlas->pixels +
+                                      (260 + y) * atlas->pitch + (x0 + x) * 4;
                     Uint8* bp = (Uint8*)b->pixels + y * b->pitch + x * 4;
                     Uint8* tp = (Uint8*)t->pixels + y * t->pitch + x * 4;
                     bool opaque = sp[3] > 0;
@@ -870,47 +828,47 @@ void buildSprites(SDL_Renderer* ren) {
                     bp[0] = bp[1] = bp[2] = 255; bp[3] = box ? 255 : 0;
                     tp[0] = sp[0]; tp[1] = sp[1]; tp[2] = sp[2]; tp[3] = yellow ? 255 : 0;
                 }
-            bg   = {56, th, texFromSurface(ren, b)};
-            text = {56, th, texFromSurface(ren, t)};
+            bg   = {sw, sh, texFromSurface(ren, b)};
+            text = {sw, sh, texFromSurface(ren, t)};
             SDL_DestroySurface(b);
             SDL_DestroySurface(t);
         };
-        splitHalf(2,  g_startBg[0], g_startText[0]);
-        splitHalf(62, g_startBg[1], g_startText[1]);
-        stbi_image_free(tpx);
-    } else {
-        std::fprintf(stderr, "start sprite decode failed\n");
-    }
+        splitStartHalf(240, g_startBg[0], g_startText[0]);
+        splitStartHalf(300, g_startBg[1], g_startText[1]);
 
-    // The power orb is prebaked from the shared atlas in the block above.
-
-    // Coin-pickup sparkle (pickCoin.png): 4 evenly-spaced frames. The art is
-    // already white; force every opaque pixel fully white so a yellow colour mod
-    // tints it cleanly.
-    int pw = 0, ph = 0, pc = 0;
-    stbi_uc* ppx = stbi_load_from_memory(pickcoin_png, (int)pickcoin_png_len,
-                                         &pw, &ph, &pc, 4);
-    if (ppx) {
-        SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(pw, ph, SDL_PIXELFORMAT_RGBA32, ppx, pw * 4);
+        // Coin-pickup sparkle ("ennemy_explosions"): 4 white burst frames (drawn
+        // centred and tinted yellow). Force opaque pixels white for a clean tint.
+        static const int pickRect[4][4] = {
+            {175, 159, 26, 26}, {209, 159, 30, 28}, {244, 159, 32, 29}, {282, 156, 32, 32}
+        };
         for (int i = 0; i < 4; ++i) {
-            int sx0 = i * pw / 4, sx1 = (i + 1) * pw / 4, fw = sx1 - sx0;
-            SDL_Surface* f = SDL_CreateSurface(fw, ph, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{sx0, 0, fw, ph};
-            SDL_BlitSurface(strip, &src, f, nullptr);
-            for (int y = 0; y < f->h; ++y)
-                for (int x = 0; x < f->w; ++x) {
+            const int w = pickRect[i][2], h = pickRect[i][3];
+            SDL_Surface* f = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{pickRect[i][0], pickRect[i][1], w, h};
+            SDL_BlitSurface(atlas, &src, f, nullptr);
+            for (int y = 0; y < h; ++y)
+                for (int x = 0; x < w; ++x) {
                     Uint8* p = (Uint8*)f->pixels + y * f->pitch + x * 4;
                     if (p[3]) { p[0] = p[1] = p[2] = 255; }
                 }
-            g_pickCoinFrames[i] = {fw, ph, texFromSurface(ren, f)};
+            g_pickCoinFrames[i] = {w, h, texFromSurface(ren, f)};
             SDL_DestroySurface(f);
         }
-        SDL_DestroySurface(strip);
-        stbi_image_free(ppx);
+
+        SDL_DestroySurface(atlas);
+        stbi_image_free(spx);
     } else {
-        std::fprintf(stderr, "pickcoin sprite decode failed\n");
+        std::fprintf(stderr, "full sprites atlas decode failed\n");
     }
+
+    // Bonus B/E/S coins, the collect flash, bombs and the explosion are cropped
+    // from the shared atlas in the block above.
+
+    // The "START!" intro halves are cropped from the shared atlas in the block above.
+
+    // The power orb is prebaked from the shared atlas in the block above.
+
+    // The coin-pickup sparkle is cropped from the shared atlas in the block above.
 
     // Bird flap frames are cropped from the shared atlas in the block above.
 
