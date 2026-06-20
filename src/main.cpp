@@ -46,13 +46,10 @@
 #pragma GCC diagnostic pop
 #include "screens_png.h"
 #include "live_png.h"        // little Jack life icon for the HUD (31x32)
-#include "jack_png.h"        // Jack animation frames (15 x 16x15) from the original
-#include "bird_png.h"        // bird enemy flap frames (9 x 16x16) from the original
 #include "mummy_png.h"       // mummy enemy frames (8 x 16x16) from the original
 #include "bonus_png.h"       // bonus "B" coin spin frames (4 x, from bonusSprite.png)
 #include "initenemy_png.h"   // 4-frame spawn flash shown before a mummy appears fuse
 #include "start_png.h"       // "START!" intro: two interlaced halves (start.png)
-#include "powerball_png.h"   // the P power-orb sprite (16x16), tinted per type
 #include "pickcoin_png.h"    // 4-frame coin-pickup sparkle (white, tinted yellow)
 // banner/bombs/bonusE/bonusS/bonustaken/explosion now cropped from the atlas
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
@@ -382,7 +379,8 @@ Sprite g_startBg[2], g_startText[2];
 
 // Jack's animation frames, mirroring the original game (bombjack-resources):
 // an idle pose, a 4-frame walk cycle per direction, and directional flying
-// (rising) / falling poses. Frame order matches the embedded jack_png strip.
+// (rising) / falling poses. Frames are cropped from the shared atlas ("bj_*")
+// in buildSprites, in this order.
 enum JackFrame {
     JF_IDLE,
     JF_WALK_R0, JF_WALK_R1, JF_WALK_R2, JF_WALK_R3,
@@ -415,8 +413,8 @@ constexpr int   VICTORY_SEQ[VICTORY_STEPS] = {
 };
 
 // Bird enemy: a 3-frame wing-flap cycle per heading (left / right / vertical),
-// plus the arcade's pulsing-red recolour (BirdToColors). Frame order matches
-// the embedded bird_png strip.
+// plus the arcade's pulsing-red recolour (BirdToColors). Frames are cropped from
+// the shared atlas ("bird_move_*") in buildSprites, in this order.
 enum BirdFrame {
     BF_LEFT0, BF_LEFT1, BF_LEFT2,
     BF_RIGHT0, BF_RIGHT1, BF_RIGHT2,
@@ -580,17 +578,35 @@ void buildSprites(SDL_Renderer* ren) {
         std::fprintf(stderr, "sprite sheet decode failed\n");
     }
 
-    // Jack animation frames: slice the embedded strip into JF_COUNT cells.
-    int jw = 0, jh = 0, jc = 0;
-    stbi_uc* jpx = stbi_load_from_memory(jack_png, (int)jack_png_len,
-                                         &jw, &jh, &jc, 4);
-    if (jpx) {
-        SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(jw, jh, SDL_PIXELFORMAT_RGBA32, jpx, jw * 4);
+    // Jack's living animation frames are cropped from the shared atlas below.
+
+    // Jack death sequence frames (bj_dancing, bj_PLF, bj_dead) from full atlas.
+    int sw = 0, sh = 0, sc = 0;
+    stbi_uc* spx = stbi_load_from_memory(sprites_full_png, (int)sprites_full_png_len,
+                                         &sw, &sh, &sc, 4);
+    if (spx) {
+        SDL_Surface* atlas =
+            SDL_CreateSurfaceFrom(sw, sh, SDL_PIXELFORMAT_RGBA32, spx, sw * 4);
+        auto cropJackVar = [&](int x, int y, int w, int h, JackVarFrame& out) {
+            SDL_Surface* f = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{x, y, w, h};
+            SDL_BlitSurface(atlas, &src, f, nullptr);
+            out = {w, h, texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+        };
+
+        // Jack's living frames (all 16x15 in JackFrame order; sprites.json "bj_*").
+        static const int jackRect[JF_COUNT][2] = {
+            {4, 4},                                       // IDLE
+            {24, 4}, {44, 4}, {64, 4}, {84, 4},           // WALK_R0..3
+            {104, 4}, {124, 4}, {144, 4}, {164, 4},       // WALK_L0..3
+            {224, 4}, {264, 4}, {304, 4},                 // FLY, FLY_R, FLY_L
+            {204, 4}, {284, 4}, {324, 4},                 // FALL, FALL_R, FALL_L
+        };
         for (int i = 0; i < JF_COUNT; ++i) {
             SDL_Surface* f = SDL_CreateSurface(JACK_FW, JACK_FH, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{i * JACK_FW, 0, JACK_FW, JACK_FH};
-            SDL_BlitSurface(strip, &src, f, nullptr);
+            SDL_Rect src{jackRect[i][0], jackRect[i][1], JACK_FW, JACK_FH};
+            SDL_BlitSurface(atlas, &src, f, nullptr);
             g_jackTex[i] = texFromSurface(ren, f);
             // Frozen twin: classify pixels into 4 luminance bands, then bake 4
             // white phase-frames whose bands rotate. A colour-mod tints them to
@@ -620,26 +636,6 @@ void buildSprites(SDL_Renderer* ren) {
             }
             SDL_DestroySurface(f);
         }
-        SDL_DestroySurface(strip);
-        stbi_image_free(jpx);
-    } else {
-        std::fprintf(stderr, "jack sprite decode failed\n");
-    }
-
-    // Jack death sequence frames (bj_dancing, bj_PLF, bj_dead) from full atlas.
-    int sw = 0, sh = 0, sc = 0;
-    stbi_uc* spx = stbi_load_from_memory(sprites_full_png, (int)sprites_full_png_len,
-                                         &sw, &sh, &sc, 4);
-    if (spx) {
-        SDL_Surface* atlas =
-            SDL_CreateSurfaceFrom(sw, sh, SDL_PIXELFORMAT_RGBA32, spx, sw * 4);
-        auto cropJackVar = [&](int x, int y, int w, int h, JackVarFrame& out) {
-            SDL_Surface* f = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{x, y, w, h};
-            SDL_BlitSurface(atlas, &src, f, nullptr);
-            out = {w, h, texFromSurface(ren, f)};
-            SDL_DestroySurface(f);
-        };
         static const int danceRect[3][4] = {
             {249, 31, 16, 17}, {269, 31, 16, 17}, {64, 34, 15, 14}
         };
@@ -726,6 +722,61 @@ void buildSprites(SDL_Renderer* ren) {
         static const int er[3][4] = {{24, 120, 8, 8}, {38, 114, 12, 12}, {56, 112, 16, 16}};
         for (int i = 0; i < 3; ++i) g_explFrames[i] = cropSprite(er[i][0], er[i][1], er[i][2], er[i][3]);
 
+        // Bird flap frames ("bird_move_left/right/vertical", 3 each). The atlas
+        // boxes are tightly cropped at varying heights, so each is centred into a
+        // common 16x16 cell to keep the body anchored through the wing-flap.
+        static const int birdRect[BF_COUNT][4] = {
+            {140, 53, 16, 16}, {160, 54, 16, 13}, {180, 55, 16, 11},   // left 0..2
+            {352, 53, 16, 16}, {373, 54, 16, 13}, {393, 54, 16, 11},   // right 0..2
+            {201, 53, 15, 15}, {221, 55, 15, 12}, {241, 55, 15, 11},   // vertical 0..2
+        };
+        for (int i = 0; i < BF_COUNT; ++i) {
+            const int w = birdRect[i][2], h = birdRect[i][3];
+            SDL_Surface* f = SDL_CreateSurface(BIRD_FW, BIRD_FH, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{birdRect[i][0], birdRect[i][1], w, h};
+            SDL_Rect dst{(BIRD_FW - w) / 2, (BIRD_FH - h) / 2, w, h};   // centre in the cell
+            SDL_BlitSurface(atlas, &src, f, &dst);
+            g_birdTex[i] = texFromSurface(ren, f);
+            g_birdEye[i] = makeEyeMask(ren, f);
+            SDL_DestroySurface(f);
+        }
+
+        // Power orb ("power" 12x12): classify pixels into 4 luminance bands, then
+        // prebake a recoloured ball per colour family and cycle phase. Stepping
+        // the phase at runtime cycles the shades (the orb itself stays upright).
+        {
+            const int PX = 292, PY = 116, ow = 12, oh = 12;
+            std::vector<Uint8> opx((size_t)ow * oh * 4);
+            for (int y = 0; y < oh; ++y)
+                std::memcpy(&opx[(size_t)y * ow * 4],
+                            (Uint8*)atlas->pixels + (PY + y) * atlas->pitch + PX * 4,
+                            (size_t)ow * 4);
+            auto lum = [](const Uint8* p) { return 0.30f*p[0] + 0.59f*p[1] + 0.11f*p[2]; };
+            float lo = 1e9f, hi = -1e9f;
+            for (int i = 0; i < ow * oh; ++i)
+                if (opx[i*4 + 3] > 0) { float L = lum(&opx[i*4]); lo = std::min(lo, L); hi = std::max(hi, L); }
+            float span = std::max(1.0f, hi - lo);
+            std::vector<int> band((size_t)ow * oh, -1);
+            for (int i = 0; i < ow * oh; ++i)
+                if (opx[i*4 + 3] > 0) band[i] = std::min(3, (int)((lum(&opx[i*4]) - lo) / span * 4.0f));
+            const float bf[4] = {0.50f, 0.68f, 0.84f, 1.0f};   // 4 brightness shades
+            for (int fam = 0; fam < 7; ++fam) {
+                Color bc = POWER_COLORS[fam];
+                for (int ph = 0; ph < 4; ++ph) {
+                    SDL_Surface* s = SDL_CreateSurface(ow, oh, SDL_PIXELFORMAT_RGBA32);
+                    for (int i = 0; i < ow * oh; ++i) {
+                        Uint8* dp = (Uint8*)s->pixels + i * 4;
+                        if (band[i] < 0) { dp[0] = dp[1] = dp[2] = dp[3] = 0; continue; }
+                        float f = bf[(band[i] + ph) & 3];      // cycle the shade by phase
+                        dp[0] = (Uint8)(bc.r * f); dp[1] = (Uint8)(bc.g * f);
+                        dp[2] = (Uint8)(bc.b * f); dp[3] = 255;
+                    }
+                    g_orbCycle[fam][ph] = {ow, oh, texFromSurface(ren, s)};
+                    SDL_DestroySurface(s);
+                }
+            }
+        }
+
         SDL_DestroySurface(atlas);
         stbi_image_free(spx);
     } else {
@@ -791,50 +842,7 @@ void buildSprites(SDL_Renderer* ren) {
         std::fprintf(stderr, "start sprite decode failed\n");
     }
 
-    // Power orb (PowerBall.png): the pinwheel "P" ball. We classify each pixel
-    // into one of 4 bands by luminance, then prebake, for every colour family
-    // and every cycle phase, a recoloured ball whose 4 bands use 4 shades near
-    // the base colour. Stepping the phase at runtime cycles the colours (no
-    // sprite rotation; the orb stays upright).
-    int ow = 0, oh = 0, oc = 0;
-    stbi_uc* opx = stbi_load_from_memory(powerball_png, (int)powerball_png_len,
-                                         &ow, &oh, &oc, 4);
-    if (opx) {
-        auto lum = [](const stbi_uc* p) {
-            return 0.30f * p[0] + 0.59f * p[1] + 0.11f * p[2];
-        };
-        float lo = 1e9f, hi = -1e9f;                  // luminance range of the ball
-        for (int i = 0; i < ow * oh; ++i)
-            if (opx[i * 4 + 3] > 0) {
-                float L = lum(opx + i * 4);
-                lo = std::min(lo, L); hi = std::max(hi, L);
-            }
-        float span = std::max(1.0f, hi - lo);
-        // Per-pixel band 0..3 (dark -> bright); -1 = transparent.
-        std::vector<int> band((size_t)ow * oh, -1);
-        for (int i = 0; i < ow * oh; ++i)
-            if (opx[i * 4 + 3] > 0)
-                band[i] = std::min(3, (int)((lum(opx + i * 4) - lo) / span * 4.0f));
-        const float bf[4] = {0.50f, 0.68f, 0.84f, 1.0f};   // 4 brightness shades
-        for (int fam = 0; fam < 7; ++fam) {
-            Color bc = POWER_COLORS[fam];
-            for (int ph = 0; ph < 4; ++ph) {
-                SDL_Surface* s = SDL_CreateSurface(ow, oh, SDL_PIXELFORMAT_RGBA32);
-                for (int i = 0; i < ow * oh; ++i) {
-                    Uint8* dp = (Uint8*)s->pixels + i * 4;
-                    if (band[i] < 0) { dp[0] = dp[1] = dp[2] = dp[3] = 0; continue; }
-                    float f = bf[(band[i] + ph) & 3];      // cycle the shade by phase
-                    dp[0] = (Uint8)(bc.r * f); dp[1] = (Uint8)(bc.g * f);
-                    dp[2] = (Uint8)(bc.b * f); dp[3] = 255;
-                }
-                g_orbCycle[fam][ph] = {ow, oh, texFromSurface(ren, s)};
-                SDL_DestroySurface(s);
-            }
-        }
-        stbi_image_free(opx);
-    } else {
-        std::fprintf(stderr, "power orb sprite decode failed\n");
-    }
+    // The power orb is prebaked from the shared atlas in the block above.
 
     // Coin-pickup sparkle (pickCoin.png): 4 evenly-spaced frames. The art is
     // already white; force every opaque pixel fully white so a yellow colour mod
@@ -864,26 +872,7 @@ void buildSprites(SDL_Renderer* ren) {
         std::fprintf(stderr, "pickcoin sprite decode failed\n");
     }
 
-    // Bird frames: slice the embedded strip into BF_COUNT cells.
-    int dw = 0, dh = 0, dc = 0;
-    stbi_uc* dpx = stbi_load_from_memory(bird_png, (int)bird_png_len,
-                                         &dw, &dh, &dc, 4);
-    if (dpx) {
-        SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(dw, dh, SDL_PIXELFORMAT_RGBA32, dpx, dw * 4);
-        for (int i = 0; i < BF_COUNT; ++i) {
-            SDL_Surface* f = SDL_CreateSurface(BIRD_FW, BIRD_FH, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{i * BIRD_FW, 0, BIRD_FW, BIRD_FH};
-            SDL_BlitSurface(strip, &src, f, nullptr);
-            g_birdTex[i] = texFromSurface(ren, f);
-            g_birdEye[i] = makeEyeMask(ren, f);
-            SDL_DestroySurface(f);
-        }
-        SDL_DestroySurface(strip);
-        stbi_image_free(dpx);
-    } else {
-        std::fprintf(stderr, "bird sprite decode failed\n");
-    }
+    // Bird flap frames are cropped from the shared atlas in the block above.
 
     // Mummy frames: slice the embedded strip into MF_COUNT cells.
     int mw = 0, mh = 0, mc = 0;
