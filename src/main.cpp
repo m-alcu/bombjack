@@ -294,15 +294,15 @@ void useScreen(SDL_Renderer* r) {
 
 // ---------------------------------------------------------------------------
 // Sprites — Jack, bombs and enemies are cropped from the embedded official
-// Bomb Jack sprite sheet (sprites_pack.h); the girder platform is still a small
-// pixel map (its colour is stage-specific in the arcade). No runtime files.
+// Bomb Jack sprite sheet (sprites_pack.h). Platforms are drawn procedurally
+// (drawPlatformShaded), so they need no sprite here. No runtime files.
 // ---------------------------------------------------------------------------
 enum SpriteId {
     SP_BOMB, SP_ENEMY1, SP_ENEMY2,
     SP_MUMMY, SP_MUMMY_WALK, SP_MUMMY_FALL,
     SP_SPHERE1, SP_SPHERE2, SP_ORB1, SP_ORB2, SP_HORN1, SP_HORN2,
     SP_CLUB1, SP_CLUB2, SP_UFO1, SP_UFO2,
-    SP_PLAT, SP_COUNT
+    SP_COUNT
 };
 
 struct Sprite { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
@@ -395,37 +395,6 @@ inline Uint8 eyePulse(float t) {
     return EYE_PULSE[(int)(t / BIRD_PULSE_STEP) % (int)std::size(EYE_PULSE)];
 }
 
-SDL_Color paletteColor(char c) {
-    switch (c) {
-        case 'B': return {50, 100, 235, 255};   // blue girder
-        case 'b': return {25, 55, 160, 255};    // dark blue
-        case 'L': return {150, 165, 245, 255};  // platform top edge
-        case 'D': return {40, 55, 120, 255};    // platform shadow
-        default:  return {0, 0, 0, 0};          // transparent
-    }
-}
-
-// The girder platform tile (tiled across each platform rect).
-std::vector<std::string> platformRows() {
-    return {
-        "LLLLLLLLLLLLLLLL", "BBBBBBBBBBBBBBBB", "BBBBBBBBBBBBBBBB",
-        "BBBbbBBBBBBbbBBB", "BbbDDbbbbbbDDbbB", "BBBBBBBBBBBBBBBB",
-        "BBBBBBBBBBBBBBBB", "DDDDDDDDDDDDDDDD", "BBBBBBBBBBBBBBBB",
-        "BBBbbBBBBBBbbBBB", "BbbDDbbbbbbDDbbB", "DDDDDDDDDDDDDDDD"};
-}
-
-// Verify the platform pixel map is rectangular (catches authoring miscounts).
-int validateSprites() {
-    int bad = 0;
-    auto rows = platformRows();
-    size_t w = rows.empty() ? 0 : rows[0].size();
-    for (size_t r = 0; r < rows.size(); ++r)
-        if (rows[r].size() != w) {
-            std::printf("platform row %zu width %zu != %zu\n", r, rows[r].size(), w);
-            ++bad;
-        }
-    return bad;
-}
 
 static SDL_Texture* texFromSurface(SDL_Renderer* ren, SDL_Surface* s) {
     SDL_Texture* t = SDL_CreateTextureFromSurface(ren, s);
@@ -519,20 +488,6 @@ void buildSprites(SDL_Renderer* ren) {
     } else {
         std::fprintf(stderr, "sprite sheet decode failed\n");
     }
-
-    // Platform girder: built from its pixel map.
-    auto rows = platformRows();
-    int ph = (int)rows.size(), pw = (int)rows[0].size();
-    SDL_Surface* s = SDL_CreateSurface(pw, ph, SDL_PIXELFORMAT_RGBA32);
-    Uint8* sp = (Uint8*)s->pixels;
-    for (int y = 0; y < ph; ++y)
-        for (int x = 0; x < pw; ++x) {
-            SDL_Color c = paletteColor(rows[y][x]);
-            Uint8* p = sp + y * s->pitch + x * 4;  // RGBA32 byte order
-            p[0] = c.r; p[1] = c.g; p[2] = c.b; p[3] = c.a;
-        }
-    g_sprites[SP_PLAT] = {pw, ph, texFromSurface(ren, s)};
-    SDL_DestroySurface(s);
 
     // Jack animation frames: slice the embedded strip into JF_COUNT cells.
     int jw = 0, jh = 0, jc = 0;
@@ -2072,10 +2027,6 @@ void render(SDL_Renderer* r, const Game& g) {
 // Headless self-test: run the simulation with scripted input, no window.
 // ---------------------------------------------------------------------------
 int selfTest(int steps) {
-    if (int bad = validateSprites()) {
-        std::printf("FAIL: %d malformed sprite row(s)\n", bad);
-        return 1;
-    }
     Game g;
     initPlatforms(g);
     startGame(g);
