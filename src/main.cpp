@@ -57,6 +57,7 @@
 #include "start_png.h"       // "START!" intro: two interlaced halves (start.png)
 #include "powerball_png.h"   // the P power-orb sprite (16x16), tinted per type
 #include "explosion_png.h"   // 3-frame bomb-clear explosion (small -> big)
+#include "pickcoin_png.h"    // 4-frame coin-pickup sparkle (white, tinted yellow)
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "sprites_full_png.h" // full original sprites atlas (for Jack death frames)
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
@@ -147,6 +148,9 @@ constexpr int KILL_POINTS[] = {100, 200, 300, 500, 800, 1200, 2000};
 constexpr int POWER_POINTS[] = {100, 200, 300, 500, 800, 1000, 2000};
 
 // Mummies drop in over time and transform into flying chasers on the ground.
+constexpr float MUMMY_HALF_H = 14.0f;       // mummy collision half-height
+constexpr float MUMMY_SPAWN_Y = 90.0f;      // default drop-in centre height
+constexpr float MUMMY_DROP_GAP = 8.0f;      // clearance kept above a high target platform
 constexpr float INIT_ENEMY_TIME = 0.6f;     // 4-frame spawn flash before a mummy appears
 constexpr float MUMMY_APPEAR_TIME = 1.1f;   // pop-in pause before it moves
 constexpr float MUMMY_DISAPPEAR_TIME = 0.5f; // bottom-floor vanish before transform
@@ -204,6 +208,8 @@ struct Enemy {
 struct Popup { float x, y, age = 0.0f; int value = 0; };  // floating score text
 struct Explosion { float x, y, age = 0.0f; };            // bomb-clear burst (3 frames)
 constexpr float EXPL_FRAME = 0.06f;                       // per-frame time (quick)
+struct CoinPickup { float x, y, age = 0.0f; };           // sparkle when a coin is collected
+constexpr float PICKCOIN_FRAME = 0.06f;                   // per-frame time (4 frames)
 
 struct Game {
     int   state = TITLE;
@@ -244,6 +250,7 @@ struct Game {
     std::vector<Enemy>     enemies;
     std::vector<Popup>     popups;
     std::vector<Explosion> explosions;
+    std::vector<CoinPickup> coinPickups;
     std::mt19937           rng{std::random_device{}()};
 };
 
@@ -338,6 +345,10 @@ Sprite g_orbCycle[7][4];
 
 // Bomb-clear explosion frames (explosion.png): small -> medium -> big.
 Sprite g_explFrames[3];
+
+// Coin-pickup sparkle (pickCoin.png): 4 frames, baked as white masks so the
+// draw can tint them yellow.
+Sprite g_pickCoinFrames[4];
 
 // "START!" intro halves (start.png): each carries alternate scanlines of the
 // word, so overlapping them in the centre spells it out. Each half is split into
@@ -765,6 +776,34 @@ void buildSprites(SDL_Renderer* ren) {
         std::fprintf(stderr, "explosion sprite decode failed\n");
     }
 
+    // Coin-pickup sparkle (pickCoin.png): 4 evenly-spaced frames. The art is
+    // already white; force every opaque pixel fully white so a yellow colour mod
+    // tints it cleanly.
+    int pw = 0, ph = 0, pc = 0;
+    stbi_uc* ppx = stbi_load_from_memory(pickcoin_png, (int)pickcoin_png_len,
+                                         &pw, &ph, &pc, 4);
+    if (ppx) {
+        SDL_Surface* strip =
+            SDL_CreateSurfaceFrom(pw, ph, SDL_PIXELFORMAT_RGBA32, ppx, pw * 4);
+        for (int i = 0; i < 4; ++i) {
+            int sx0 = i * pw / 4, sx1 = (i + 1) * pw / 4, fw = sx1 - sx0;
+            SDL_Surface* f = SDL_CreateSurface(fw, ph, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{sx0, 0, fw, ph};
+            SDL_BlitSurface(strip, &src, f, nullptr);
+            for (int y = 0; y < f->h; ++y)
+                for (int x = 0; x < f->w; ++x) {
+                    Uint8* p = (Uint8*)f->pixels + y * f->pitch + x * 4;
+                    if (p[3]) { p[0] = p[1] = p[2] = 255; }
+                }
+            g_pickCoinFrames[i] = {fw, ph, texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+        }
+        SDL_DestroySurface(strip);
+        stbi_image_free(ppx);
+    } else {
+        std::fprintf(stderr, "pickcoin sprite decode failed\n");
+    }
+
     // Bird frames: slice the embedded strip into BF_COUNT cells.
     int dw = 0, dh = 0, dc = 0;
     stbi_uc* dpx = stbi_load_from_memory(bird_png, (int)bird_png_len,
@@ -1125,6 +1164,7 @@ void startRound(Game& g) {
     g.transformIdx = 0;
     g.popups.clear();
     g.explosions.clear();
+    g.coinPickups.clear();
     g.phaseStart = g.score;            // start counting this phase's points fresh
     g.multiplier = 1;                  // the points multiplier resets each level
     g.bonusActive = false;
@@ -1158,7 +1198,13 @@ void spawnMummy(Game& g) {
     e.timer = INIT_ENEMY_TIME;
     e.r = 10.0f;
     e.x = lay.mummyx[g.p.x < LOGW / 2 ? 1 : 0];   // drop in away from Jack
-    e.y = 90.0f;
+    // Drop in from the default height, but never start at/below the topmost
+    // platform in this column (some columns sit under a y=48/96 platform, which
+    // would spawn the mummy embedded in it and let it fall straight through).
+    float topY = FLOOR_TOP;
+    for (const SDL_FRect& pl : g.platforms)
+        if (e.x > pl.x && e.x < pl.x + pl.w) topY = std::min(topY, pl.y);
+    e.y = std::min(MUMMY_SPAWN_Y, topY - MUMMY_HALF_H - MUMMY_DROP_GAP);
     e.vx = e.vy = 0.0f;
     e.bounces = L.bouncing;
     e.becomes = L.mummies[g.transformIdx % L.nmummies];
@@ -1208,7 +1254,7 @@ void updateMummy(Game& g, Enemy& e, float dt) {
         if (e.timer <= 0) transformMummy(g, e);
         return;
     }
-    const float halfH = 14.0f, halfW = 8.0f;
+    const float halfH = MUMMY_HALF_H, halfW = 8.0f;
     e.vy += GRAVITY * dt;
     if (e.vy > MAXFALL) e.vy = MAXFALL;
     float feetOld = e.y + halfH;
@@ -1614,6 +1660,12 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         if (it->age > 1.0f) it = g.popups.erase(it); else ++it;
     }
 
+    // Age out coin-pickup sparkles (4 quick frames, then gone).
+    for (auto it = g.coinPickups.begin(); it != g.coinPickups.end();) {
+        it->age += dt;
+        if (it->age >= 4 * PICKCOIN_FRAME) it = g.coinPickups.erase(it); else ++it;
+    }
+
     // Age out clear explosions (3 quick frames, then gone).
     for (auto it = g.explosions.begin(); it != g.explosions.end();) {
         it->age += dt;
@@ -1663,6 +1715,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 int gain = KILL_POINTS[idx] * g.streak * g.multiplier;
                 g.score += gain;
                 g.popups.push_back({e.x, e.y - 6, 0.0f, gain});
+                g.coinPickups.push_back({e.x, e.y, 0.0f});   // pickup sparkle
                 g.killCount++;
                 it = g.enemies.erase(it);
                 continue;
@@ -2043,6 +2096,17 @@ void render(SDL_Renderer* r, const Game& g) {
         const float s = 1.6f;                          // a touch bigger than a bomb
         SDL_FRect dst{ex.x - f.w * s / 2, ex.y - f.h * s / 2, f.w * s, f.h * s};
         SDL_RenderTexture(r, f.tex, nullptr, &dst);
+    }
+
+    // Coin-pickup sparkles: play the 4 frames once, tinted yellow.
+    for (const CoinPickup& cp : g.coinPickups) {
+        int fi = std::min(3, (int)(cp.age / PICKCOIN_FRAME));
+        const Sprite& f = g_pickCoinFrames[fi];
+        if (!f.tex) continue;
+        const float s = 2.0f;                          // drawn at 2x the coin size
+        const float w = f.w * SPRITE_AR * s, h = f.h * s;
+        SDL_FRect dst{cp.x - w / 2, cp.y - h / 2, w, h};
+        drawTexTinted(r, f.tex, dst, false, 255, 215, 0);   // gold/yellow
     }
 
     if (g.orbActive) drawPowerOrb(r, g.orbX, g.orbY, g.time, g.orbFamily);

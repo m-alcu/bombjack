@@ -74,7 +74,10 @@
       "Bash(identify assets/bombs.png)",
       "Bash(xxd -i -n bombs_png assets/bombs.png)",
       "Bash(xxd -i -n initenemy_png assets/InitEnemy.png)",
-      "Bash(SDL_VIDEODRIVER=dummy ./bombjack --rendertest)"
+      "Bash(SDL_VIDEODRIVER=dummy ./bombjack --rendertest)",
+      "Bash(grep -oE \"\\\\{[0-9.]+,[0-9.]+,[0-9.]+,16\\\\.0\\\\}\" src/levels_data.h)",
+      "Bash(./bombjack --selftest 2000)",
+      "Bash(xxd -i -n pickcoin_png assets/pickCoin.png)"
     ],
     "additionalDirectories": [
       "/tmp",
