@@ -115,7 +115,7 @@ constexpr float BOMB_HALF_W = 6.0f * (float)LOGW / (float)GAME_W;
 constexpr float BOMB_HALF_H = 8.0f * (float)LOGH / (float)GAME_H;
 
 constexpr float INVULN_TIME = 2.0f;     // post-hit invulnerability (s)
-constexpr float CLEAR_TIME  = 1.6f;     // round-clear banner duration (s)
+constexpr float CLEAR_TIME  = 3.2f;     // round-clear banner duration (s); also paces the victory dance
 constexpr float FREEZE_TIME = 5.0f;     // enemy freeze after grabbing the P orb
 constexpr float POWER_NEEDED = 8.0f;    // lit-bomb "charge" needed to spawn a P orb
 constexpr float ORB_SPEED = 60.0f;      // moving Power orb speed (world px/s)
@@ -399,6 +399,16 @@ struct JackVarFrame { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 JackVarFrame g_jackDance[3] = {};
 JackVarFrame g_jackPlf[4] = {};
 JackVarFrame g_jackDead[4] = {};
+// Round-clear victory dance: four 16x16 poses from sprites.png, indexed
+// Normal / Left / Right / Up, cycled through a fixed 16-step routine.
+enum JackWinPose { JW_NORMAL, JW_LEFT, JW_RIGHT, JW_UP };
+JackVarFrame g_jackWin[4] = {};
+constexpr int   VICTORY_STEPS = 16;
+constexpr float VICTORY_FRAME = CLEAR_TIME / VICTORY_STEPS;   // 0.2s/step over the banner
+constexpr int   VICTORY_SEQ[VICTORY_STEPS] = {
+    JW_NORMAL, JW_LEFT,  JW_NORMAL, JW_RIGHT, JW_NORMAL, JW_UP, JW_NORMAL, JW_UP,
+    JW_NORMAL, JW_LEFT,  JW_NORMAL, JW_RIGHT, JW_NORMAL, JW_UP, JW_NORMAL, JW_UP,
+};
 
 // Bird enemy: a 3-frame wing-flap cycle per heading (left / right / vertical),
 // plus the arcade's pulsing-red recolour (BirdToColors). Frame order matches
@@ -605,6 +615,10 @@ void buildSprites(SDL_Renderer* ren) {
         static const int deadRect[4][4] = {
             {145, 27, 16, 18}, {166, 29, 13, 16}, {184, 24, 17, 24}, {205, 27, 23, 21}
         };
+        // Victory-dance poses (Normal / Left / Right / Up), each 16x16.
+        static const int winRect[4][2] = {{4, 32}, {24, 32}, {286, 32}, {44, 32}};
+        for (int i = 0; i < 4; ++i)
+            cropJackVar(winRect[i][0], winRect[i][1], 16, 16, g_jackWin[i]);
         for (int i = 0; i < 3; ++i)
             cropJackVar(danceRect[i][0], danceRect[i][1], danceRect[i][2], danceRect[i][3],
                         g_jackDance[i]);
@@ -1908,6 +1922,19 @@ void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
     }
 }
 
+// Jack's round-clear victory dance: step through the fixed VICTORY_SEQ over the
+// clear banner, drawn at the same scale/anchor as the live Jack.
+void drawJackVictory(SDL_Renderer* r, const Player& p, float clearTimer) {
+    float elapsed = CLEAR_TIME - clearTimer;
+    int step = std::clamp((int)(elapsed / VICTORY_FRAME), 0, VICTORY_STEPS - 1);
+    const JackVarFrame& fr = g_jackWin[VICTORY_SEQ[step]];
+    if (!fr.tex) return;
+    const float scale = 26.0f / 16.0f;
+    const float dw = fr.w * scale * SPRITE_AR, dh = fr.h * scale;
+    SDL_FRect dst{p.x + PW / 2 - dw / 2, p.y + PH - dh, dw, dh};
+    SDL_RenderTexture(r, fr.tex, nullptr, &dst);
+}
+
 // Pick the sprite + draw box for an enemy based on its kind and phase.
 SpriteId enemySprite(const Enemy& e, float t, float& w, float& h) {
     bool a = std::fmod(t, 0.3f) < 0.15f;       // 2-frame animation toggle
@@ -2215,8 +2242,11 @@ void render(SDL_Renderer* r, const Game& g) {
 
     bool frozen = g.freezeTimer > 0.0f;
     for (const Enemy& e : g.enemies) drawEnemy(r, e, g.time, frozen, g.freezeTimer);
-    drawPlayer(r, g.p, g.time, g.playerDying, g.deathPhase, g.deathFrame, frozen,
-               g.freezeColor);
+    if (g.state == ROUNDCLEAR)
+        drawJackVictory(r, g.p, g.clearTimer);   // victory dance on level finish
+    else
+        drawPlayer(r, g.p, g.time, g.playerDying, g.deathPhase, g.deathFrame, frozen,
+                   g.freezeColor);
 
     useScreen(r);
     drawPlayfieldBorder(r, currentScreen(g));
