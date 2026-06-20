@@ -84,7 +84,8 @@
       "Bash(./bombjack --selftest 3000)",
       "Bash(./bombjack --selftest)",
       "Bash(sed -n '/Title logo: cropped from the shared atlas/,/^    }$/p' src/main.cpp)",
-      "Bash(sed -n '/START..*intro halves/,/start sprite decode failed/p' src/main.cpp)"
+      "Bash(sed -n '/START..*intro halves/,/start sprite decode failed/p' src/main.cpp)",
+      "Bash(command -v scrot grim spectacle gnome-screenshot maim import ffmpeg)"
     ],
     "additionalDirectories": [
       "/tmp",
