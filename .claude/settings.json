@@ -54,7 +54,21 @@
       "Bash(xxd -i -n coins_png assets/coins.png)",
       "Bash(xxd -i -n start_png assets/start.png)",
       "Bash(xxd -i -n powerball_png assets/PowerBall.png)",
-      "Bash(xxd -i -n explosion_png assets/explosion.png)"
+      "Bash(xxd -i -n explosion_png assets/explosion.png)",
+      "Skill(run)",
+      "Skill(run:*)",
+      "Bash(python3 -c \"import Xlib; print\\('xlib ok'\\)\")",
+      "Bash(python3 -c \"from PIL import ImageGrab; print\\('grab ok'\\)\")",
+      "Bash(python3 -c \"import gi; print\\('gi ok'\\)\")",
+      "Bash(DISPLAY=:1 ./bombjack)",
+      "Bash(echo \"pid $!\")",
+      "Bash(jobs -l)",
+      "Bash(DISPLAY=:1 python3 -c ' *)",
+      "Bash(command -v xwininfo xdotool wmctrl)",
+      "Bash(DISPLAY=:1 xwininfo -root -tree)",
+      "Bash(DISPLAY=:1 xwininfo -id 0x1e00035)",
+      "Bash(DISPLAY=:1 python3)",
+      "Bash(kill 12846)"
     ],
     "additionalDirectories": [
       "/tmp",

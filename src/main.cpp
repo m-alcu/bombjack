@@ -78,6 +78,13 @@ constexpr int SCREEN_W = GAME_W;                       // 224
 constexpr int SCREEN_H = HUD_H + GAME_H + HUD_H;       // 256
 constexpr int WIN_SCALE = 4;
 
+// The original Bomb Jack cabinet used a 4:3 monitor mounted vertically (TATE),
+// so the 224x256 image was displayed at a 3:4 physical aspect — its width
+// squeezed to ~6/7 (non-square pixels, slightly taller than wide). We keep the
+// internal render at 224x256 and let SDL stretch it into a 3:4 window.
+constexpr int WIN_H = SCREEN_H * WIN_SCALE;            // 1024
+constexpr int WIN_W = WIN_H * 3 / 4;                   // 768  -> 3:4
+
 // Player physics — tuned for the floaty Bomb Jack feel.
 constexpr float MOVE        = 170.0f;   // horizontal speed (px/s)
 constexpr float JUMP_VEL    = -630.0f;  // initial jump velocity (stronger jump)
@@ -2135,13 +2142,15 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    SDL_Window* win = SDL_CreateWindow("Bomb Jack", SCREEN_W * WIN_SCALE,
-                                       SCREEN_H * WIN_SCALE, SDL_WINDOW_RESIZABLE);
+    SDL_Window* win = SDL_CreateWindow("Bomb Jack", WIN_W, WIN_H,
+                                       SDL_WINDOW_RESIZABLE);
     if (!win) {
         std::fprintf(stderr, "CreateWindow failed: %s\n", SDL_GetError());
         SDL_Quit();
         return 1;
     }
+    // Lock the window to a 3:4 aspect so a resize keeps the squeezed-width look.
+    SDL_SetWindowAspectRatio(win, 3.0f / 4.0f, 3.0f / 4.0f);
     // SDL3's Vulkan render backend flickers on some Linux/X11 setups (it
     // presents alternating swapchain images), so pick a stable backend in
     // preference order. SDL_CreateRenderer silently falls back to the default
@@ -2163,8 +2172,10 @@ int main(int argc, char** argv) {
         return 1;
     }
     SDL_SetRenderVSync(ren, 1);
+    // STRETCH maps the 224x256 render onto the whole (3:4) window, producing the
+    // non-square arcade pixels; the window's locked aspect keeps it undistorted.
     SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H,
-                                     SDL_LOGICAL_PRESENTATION_LETTERBOX);
+                                     SDL_LOGICAL_PRESENTATION_STRETCH);
 
     buildSprites(ren);
     buildBackground(ren);
