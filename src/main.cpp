@@ -52,6 +52,7 @@
 #include "mummy_png.h"       // mummy enemy frames (8 x 16x16) from the original
 #include "bonus_png.h"       // bonus "B" coin spin frames (4 x, from bonusSprite.png)
 #include "coins_png.h"       // coin spin frames frozen enemies turn into (7 x, coins.png)
+#include "bombs_png.h"       // bomb sprites (7 x 12x16): frame 0 static, 1-6 lit fuse
 #include "start_png.h"       // "START!" intro: two interlaced halves (start.png)
 #include "powerball_png.h"   // the P power-orb sprite (16x16), tinted per type
 #include "explosion_png.h"   // 3-frame bomb-clear explosion (small -> big)
@@ -84,6 +85,12 @@ constexpr int WIN_SCALE = 4;
 // internal render at 224x256 and let SDL stretch it into a 3:4 window.
 constexpr int WIN_H = SCREEN_H * WIN_SCALE;            // 1024
 constexpr int WIN_W = WIN_H * 3 / 4;                   // 768  -> 3:4
+
+// That 3:4 stretch squeezes screen pixels horizontally: the world maps to
+// 1.5 px/unit across but 2.0 px/unit down, so a square-in-world sprite shows up
+// at 3/4 width (stretched tall). Multiply character sprite widths by this to draw
+// them with 1:1 (square) on-screen pixels.
+constexpr float SPRITE_AR = 4.0f / 3.0f;
 
 // Player physics — tuned for the floaty Bomb Jack feel.
 constexpr float MOVE        = 170.0f;   // horizontal speed (px/s)
@@ -247,13 +254,6 @@ void fillR(SDL_Renderer* r, float x, float y, float w, float h) {
     SDL_FRect q{x, y, w, h};
     SDL_RenderFillRect(r, &q);
 }
-void fillCircle(SDL_Renderer* r, float cx, float cy, float rad) {
-    int ir = static_cast<int>(rad);
-    for (int dy = -ir; dy <= ir; ++dy) {
-        float dx = std::sqrt(rad * rad - static_cast<float>(dy * dy));
-        fillR(r, cx - dx, cy + static_cast<float>(dy), 2 * dx + 1, 1);
-    }
-}
 // Render one glyph from the ripped font, tinted with colour c. Unknown glyphs
 // (e.g. space) draw nothing; the caller still advances the pen.
 void drawChar(SDL_Renderer* r, char ch, float x, float y, int s, Color c) {
@@ -312,6 +312,10 @@ SDL_Texture* g_multTex[6] = {};
 
 // Coin spin frames that P-frozen enemies turn into (from coins.png).
 Sprite g_coinFrames[7];
+
+// Bomb sprites (bombs.png): frame 0 is the resting bomb, frames 1-6 are the lit
+// fuse animation (the "fired" bomb cycling once it's the active target).
+Sprite g_bombFrames[7];
 
 // Power-orb sprite (PowerBall.png) prebaked per colour family [0..6] and per
 // colour-cycle phase [0..3]: each frame recolours the ball's bands with 4
@@ -665,6 +669,27 @@ void buildSprites(SDL_Renderer* ren) {
         stbi_image_free(cpx);
     } else {
         std::fprintf(stderr, "coin sprite decode failed\n");
+    }
+
+    // Bomb frames (bombs.png): 7 cells, 12x16, at x = 2 + i*20. Frame 0 is the
+    // resting bomb; frames 1-6 are the lit fuse animation.
+    int omw = 0, omh = 0, omc = 0;
+    stbi_uc* ompx = stbi_load_from_memory(bombs_png, (int)bombs_png_len,
+                                          &omw, &omh, &omc, 4);
+    if (ompx) {
+        SDL_Surface* strip =
+            SDL_CreateSurfaceFrom(omw, omh, SDL_PIXELFORMAT_RGBA32, ompx, omw * 4);
+        for (int i = 0; i < 7; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(12, 16, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{2 + i * 20, 1, 12, 16};
+            SDL_BlitSurface(strip, &src, f, nullptr);
+            g_bombFrames[i] = {12, 16, texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+        }
+        SDL_DestroySurface(strip);
+        stbi_image_free(ompx);
+    } else {
+        std::fprintf(stderr, "bomb sprite decode failed\n");
     }
 
     // "START!" intro halves (start.png): left at x=2, right at x=62, each 56x14.
@@ -1670,24 +1695,17 @@ void update(Game& g, const Input& in, float dt) {
 // Rendering
 // ---------------------------------------------------------------------------
 void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
-    // Keep render size consistent with collision extents.
+    // Keep render size consistent with collision extents. No SPRITE_AR widening
+    // here: the bomb is left to the screen's 3:4 squeeze (drawn narrow/tall).
     const float dw = BOMB_HALF_W * 2.0f;
     const float dh = BOMB_HALF_H * 2.0f;
-    drawSprite(r, SP_BOMB, b.x - dw / 2, b.y - dh / 2, dw, dh, false);
-    if (lit) {                                       // animated fuse spark
-        // Original bomb_activated has 6 frames over 0.3s -> 0.05s per frame.
-        int step = (int)(std::fmod(t, 0.3f) / 0.05f) % 6;
-        const float fx = b.x + dw * 0.10f;
-        const float fy = b.y - dh * 0.36f;
-        static const Color sparkCol[6] = {
-            {255, 190, 70}, {255, 225, 110}, {255, 245, 160},
-            {255, 225, 110}, {255, 190, 70}, {255, 145, 40}
-        };
-        static const float sparkR[6] = {1.8f, 2.3f, 2.7f, 2.3f, 2.0f, 1.6f};
-        setCol(r, sparkCol[step]);
-        fillCircle(r, fx, fy, sparkR[step]);
-        setCol(r, Color{255, 255, 255});
-        fillCircle(r, fx, fy, step == 2 ? 1.0f : 0.8f);
+    // Frame 0 is the resting bomb; the lit (active) bomb cycles frames 1-6.
+    // Original bomb_activated has 6 frames over 0.3s -> 0.05s per frame.
+    int frame = lit ? 1 + (int)(std::fmod(t, 0.3f) / 0.05f) % 6 : 0;
+    SDL_Texture* tex = g_bombFrames[frame].tex;
+    if (tex) {
+        SDL_FRect dst{b.x - dw / 2, b.y - dh / 2, dw, dh};
+        SDL_RenderTexture(r, tex, nullptr, &dst);
     }
 }
 
@@ -1701,7 +1719,7 @@ void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
             fr = &g_jackDead[std::clamp(deathFrame, 0, 3)];
         if (fr && fr->tex) {
             const float scale = 26.0f / 16.0f;
-            const float dw = fr->w * scale;
+            const float dw = fr->w * scale * SPRITE_AR;
             const float dh = fr->h * scale;
             SDL_FRect dst{p.x + PW / 2 - dw / 2, p.y + PH - dh, dw, dh};
             SDL_RenderTexture(r, fr->tex, nullptr, &dst);
@@ -1727,7 +1745,7 @@ void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
     // Draw bigger than the collision box (feet anchored to its bottom) so Jack
     // reads at a similar scale to the bombs and chasers. The frames are already
     // drawn facing the right way, so no horizontal flip is needed.
-    const float dw = 26.0f, dh = 28.0f;
+    const float dw = 26.0f * SPRITE_AR, dh = 28.0f;
     SDL_FRect dst{p.x + PW / 2 - dw / 2, p.y + PH - dh, dw, dh};
     // While enemies are frozen, Jack is monochrome in the grabbed orb's colour
     // with his shades cycling, so he shimmers in that colour.
@@ -1774,7 +1792,7 @@ void drawBird(SDL_Renderer* r, const Enemy& e, float t) {
     SDL_Texture* body = g_birdTex[base + step];
     SDL_Texture* eye  = g_birdEye[base + step];
     if (!body) return;
-    const float w = 26.0f, h = 24.0f;
+    const float w = 26.0f * SPRITE_AR, h = 24.0f;
     SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
     drawTexTinted(r, body, dst, false, 255, 255, 255);
     if (eye) drawTexTinted(r, eye, dst, false, eyePulse(t), 0, 0);
@@ -1795,7 +1813,7 @@ void drawMummy(SDL_Renderer* r, const Enemy& e, float t) {
     SDL_Texture* body = g_mummyTex[frame];
     SDL_Texture* eye  = g_mummyEye[frame];
     if (!body) return;
-    const float w = 26.0f, h = 28.0f;
+    const float w = 26.0f * SPRITE_AR, h = 28.0f;
     SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
     drawTexTinted(r, body, dst, false, 255, 255, 255);
     if (eye) drawTexTinted(r, eye, dst, false, eyePulse(t), 0, 0);
@@ -1810,7 +1828,7 @@ void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
         // Grabbing the P turns the chasers into spinning collectible coins.
         const Sprite& c = g_coinFrames[(int)(t * 10.0f) % 7];
         if (c.tex) {
-            const float w = 24.0f, h = 24.0f;
+            const float w = 24.0f * SPRITE_AR, h = 24.0f;
             SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
             SDL_RenderTexture(r, c.tex, nullptr, &dst);
         }
@@ -1820,6 +1838,7 @@ void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
     if (e.kind == EK_MUMMY) { drawMummy(r, e, t); return; }
     float w, h;
     SpriteId id = enemySprite(e, t, w, h);
+    w *= SPRITE_AR;
     bool flip = e.vx < 0;
     drawSprite(r, id, e.x - w / 2, e.y - h / 2, w, h, flip);
 }

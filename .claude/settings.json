@@ -68,7 +68,11 @@
       "Bash(DISPLAY=:1 xwininfo -root -tree)",
       "Bash(DISPLAY=:1 xwininfo -id 0x1e00035)",
       "Bash(DISPLAY=:1 python3)",
-      "Bash(kill 12846)"
+      "Bash(kill 12846)",
+      "Bash(grep -v \"\\\\./bombjack$\")",
+      "Bash(python3 -c \"from PIL import Image; im=Image.open\\('assets/bombs.png'\\); print\\('size', im.size, im.mode\\)\")",
+      "Bash(identify assets/bombs.png)",
+      "Bash(xxd -i -n bombs_png assets/bombs.png)"
     ],
     "additionalDirectories": [
       "/tmp",
