@@ -45,21 +45,16 @@
 #include "stb_image.h"
 #pragma GCC diagnostic pop
 #include "screens_png.h"
-#include "banner_png.h"     // the colorful "BOMB JACK" title logo (191x79)
 #include "live_png.h"        // little Jack life icon for the HUD (31x32)
 #include "jack_png.h"        // Jack animation frames (15 x 16x15) from the original
 #include "bird_png.h"        // bird enemy flap frames (9 x 16x16) from the original
 #include "mummy_png.h"       // mummy enemy frames (8 x 16x16) from the original
 #include "bonus_png.h"       // bonus "B" coin spin frames (4 x, from bonusSprite.png)
-#include "bonuse_png.h"      // bonus "E" (extra life) spin frames (4 x, bonusE.png)
-#include "bonuss_png.h"      // bonus "S" (special) spin frames (4 x, bonusS.png)
-#include "bonustaken_png.h"  // 6-frame flash shown when any bonus is collected
-#include "bombs_png.h"       // bomb sprites (7 x 12x16): frame 0 static, 1-6 lit
 #include "initenemy_png.h"   // 4-frame spawn flash shown before a mummy appears fuse
 #include "start_png.h"       // "START!" intro: two interlaced halves (start.png)
 #include "powerball_png.h"   // the P power-orb sprite (16x16), tinted per type
-#include "explosion_png.h"   // 3-frame bomb-clear explosion (small -> big)
 #include "pickcoin_png.h"    // 4-frame coin-pickup sparkle (white, tinted yellow)
+// banner/bombs/bonusE/bonusS/bonustaken/explosion now cropped from the atlas
 #include "sprites_pack.h"   // official Bomb Jack character sprites, packed
 #include "sprites_full_png.h" // full original sprites atlas (for Jack death frames)
 #include "levels_data.h"    // hand-authored level layouts (from levels.json)
@@ -705,6 +700,32 @@ void buildSprites(SDL_Renderer* ren) {
             g_coinFrames[i] = {14, 14, texFromSurface(ren, f)};
             SDL_DestroySurface(f);
         }
+
+        // Generic crop from the atlas into a Sprite (used for the strips below).
+        auto cropSprite = [&](int x, int y, int w, int h) -> Sprite {
+            SDL_Surface* f = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{x, y, w, h};
+            SDL_BlitSurface(atlas, &src, f, nullptr);
+            Sprite sp{w, h, texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+            return sp;
+        };
+        // Bonus E / S spin (4 frames each; sprites.json "bonus_E"/"bonus_S").
+        static const int bonusEX[4] = {150, 170, 189, 202};
+        static const int bonusSX[4] = {78, 98, 117, 130};
+        static const int bonusW[4]  = {13, 12, 7, 12};
+        for (int i = 0; i < 4; ++i) {
+            g_bonusE[i] = cropSprite(bonusEX[i], 114, bonusW[i], 13);
+            g_bonusS[i] = cropSprite(bonusSX[i], 114, bonusW[i], 13);
+        }
+        // Bonus collect flash ("power_explosions"): 6 cells of 32x32, pitch 33.
+        for (int i = 0; i < 6; ++i) g_bonusTaken[i] = cropSprite(266 + i * 33, 327, 32, 32);
+        // Bombs ("bomb" + "bomb_activated"): resting bomb then 6 lit frames, 12x16.
+        for (int i = 0; i < 7; ++i) g_bombFrames[i] = cropSprite(46 + i * 20, 136, 12, 16);
+        // Bomb-clear explosion ("bomb_explosion"): 3 growing frames.
+        static const int er[3][4] = {{24, 120, 8, 8}, {38, 114, 12, 12}, {56, 112, 16, 16}};
+        for (int i = 0; i < 3; ++i) g_explFrames[i] = cropSprite(er[i][0], er[i][1], er[i][2], er[i][3]);
+
         SDL_DestroySurface(atlas);
         stbi_image_free(spx);
     } else {
@@ -734,50 +755,8 @@ void buildSprites(SDL_Renderer* ren) {
         stbi_image_free(px);
     };
     loadBonusStrip(bonus_png,  bonus_png_len,  g_bonusFrames, "bonus B sprite");
-    loadBonusStrip(bonuse_png, bonuse_png_len, g_bonusE,      "bonus E sprite");
-    loadBonusStrip(bonuss_png, bonuss_png_len, g_bonusS,      "bonus S sprite");
-
-    // Bonus collect flash (bonusTaken.png): 6 cells, 32x32 at pitch 33 (x=1+i*33).
-    int btw = 0, bth = 0, btc = 0;
-    stbi_uc* btpx = stbi_load_from_memory(bonustaken_png, (int)bonustaken_png_len,
-                                          &btw, &bth, &btc, 4);
-    if (btpx) {
-        SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(btw, bth, SDL_PIXELFORMAT_RGBA32, btpx, btw * 4);
-        for (int i = 0; i < 6; ++i) {
-            SDL_Surface* f = SDL_CreateSurface(32, 32, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{1 + i * 33, 1, 32, 32};
-            SDL_BlitSurface(strip, &src, f, nullptr);
-            g_bonusTaken[i] = {32, 32, texFromSurface(ren, f)};
-            SDL_DestroySurface(f);
-        }
-        SDL_DestroySurface(strip);
-        stbi_image_free(btpx);
-    } else {
-        std::fprintf(stderr, "bonus taken sprite decode failed\n");
-    }
-
-
-    // Bomb frames (bombs.png): 7 cells, 12x16, at x = 2 + i*20. Frame 0 is the
-    // resting bomb; frames 1-6 are the lit fuse animation.
-    int omw = 0, omh = 0, omc = 0;
-    stbi_uc* ompx = stbi_load_from_memory(bombs_png, (int)bombs_png_len,
-                                          &omw, &omh, &omc, 4);
-    if (ompx) {
-        SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(omw, omh, SDL_PIXELFORMAT_RGBA32, ompx, omw * 4);
-        for (int i = 0; i < 7; ++i) {
-            SDL_Surface* f = SDL_CreateSurface(12, 16, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{2 + i * 20, 1, 12, 16};
-            SDL_BlitSurface(strip, &src, f, nullptr);
-            g_bombFrames[i] = {12, 16, texFromSurface(ren, f)};
-            SDL_DestroySurface(f);
-        }
-        SDL_DestroySurface(strip);
-        stbi_image_free(ompx);
-    } else {
-        std::fprintf(stderr, "bomb sprite decode failed\n");
-    }
+    // Bonus E/S, the collect flash, bombs and the explosion are cropped from the
+    // shared atlas in the block above.
 
     // "START!" intro halves (start.png): left at x=2, right at x=62, each 56x14.
     int tw = 0, th = 0, tc = 0;
@@ -855,27 +834,6 @@ void buildSprites(SDL_Renderer* ren) {
         stbi_image_free(opx);
     } else {
         std::fprintf(stderr, "power orb sprite decode failed\n");
-    }
-
-    // Bomb-clear explosion (explosion.png): 3 frames, growing small -> big.
-    int ew = 0, eh = 0, ec = 0;
-    stbi_uc* epx = stbi_load_from_memory(explosion_png, (int)explosion_png_len,
-                                         &ew, &eh, &ec, 4);
-    if (epx) {
-        SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(ew, eh, SDL_PIXELFORMAT_RGBA32, epx, ew * 4);
-        static const int er[3][4] = {{4, 5, 8, 8}, {18, 3, 12, 12}, {36, 1, 16, 16}};
-        for (int i = 0; i < 3; ++i) {
-            SDL_Surface* f = SDL_CreateSurface(er[i][2], er[i][3], SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{er[i][0], er[i][1], er[i][2], er[i][3]};
-            SDL_BlitSurface(strip, &src, f, nullptr);
-            g_explFrames[i] = {er[i][2], er[i][3], texFromSurface(ren, f)};
-            SDL_DestroySurface(f);
-        }
-        SDL_DestroySurface(strip);
-        stbi_image_free(epx);
-    } else {
-        std::fprintf(stderr, "explosion sprite decode failed\n");
     }
 
     // Coin-pickup sparkle (pickCoin.png): 4 evenly-spaced frames. The art is
@@ -1133,19 +1091,26 @@ void buildBackground(SDL_Renderer* ren) {
     stbi_image_free(px);
     g_bgCount = w / BG_W;
 
-    // Title logo. Build one texture per rotation phase, cycling the three ray
-    // blues (BombjackLogoColors from the original game) so the rays spin.
-    int bw = 0, bh = 0, bc = 0;
-    stbi_uc* bpx = stbi_load_from_memory(banner_png, (int)banner_png_len,
-                                         &bw, &bh, &bc, 4);
-    if (!bpx) {
-        std::fprintf(stderr, "banner decode failed\n");
+    // Title logo: cropped from the shared atlas ("logo" at 4,300, 192x80), then
+    // recoloured per phase to spin the three ray blues (BombjackLogoColors).
+    int aw = 0, ah = 0, ac = 0;
+    stbi_uc* apx = stbi_load_from_memory(sprites_full_png, (int)sprites_full_png_len,
+                                         &aw, &ah, &ac, 4);
+    if (!apx) {
+        std::fprintf(stderr, "atlas decode failed (banner)\n");
         return;
     }
+    const int LX = 4, LY = 300, bw = BANNER_W, bh = BANNER_H;
+    std::vector<Uint8> logo((size_t)bw * bh * 4);
+    for (int y = 0; y < bh; ++y)
+        std::memcpy(&logo[(size_t)y * bw * 4],
+                    apx + ((size_t)(LY + y) * aw + LX) * 4, (size_t)bw * 4);
+    stbi_image_free(apx);
+
     const Uint8 blues[BANNER_PHASES][3] = {{0, 82, 255}, {0, 140, 255}, {0, 189, 255}};
-    std::vector<Uint8> buf(bw * bh * 4);
+    std::vector<Uint8> buf((size_t)bw * bh * 4);
     for (int phase = 0; phase < BANNER_PHASES; ++phase) {
-        std::memcpy(buf.data(), bpx, buf.size());
+        std::memcpy(buf.data(), logo.data(), buf.size());
         for (size_t p = 0; p < buf.size(); p += 4) {
             for (int i = 0; i < BANNER_PHASES; ++i)
                 if (buf[p] == blues[i][0] && buf[p + 1] == blues[i][1] &&
@@ -1161,7 +1126,6 @@ void buildBackground(SDL_Renderer* ren) {
         SDL_SetTextureScaleMode(g_bannerTex[phase], SDL_SCALEMODE_NEAREST);
         SDL_DestroySurface(bs);
     }
-    stbi_image_free(bpx);
 
     // Jack life icon.
     int lw = 0, lh = 0, lc = 0;
