@@ -1005,33 +1005,71 @@ void drawPlayfieldBorder(SDL_Renderer* r, int screen) {
     }
 }
 
+// A platform whose edge reaches a side frame gets a small tab drawn over the
+// frame (drawPlatformFrameTab); these helpers detect that and shape its corners.
+constexpr int PLAT_TAB_EXT   = 3;   // screen px the platform pokes into the frame
+constexpr int PLAT_TAB_NOTCH = 2;   // corner pixels dropped to round the tab tip
+
+struct EdgeTouch { bool left, right; };
+EdgeTouch platformEdgeTouch(int x, int w) {
+    const int b = (int)std::lround(BORDER_SOLID_X);
+    return { x <= b + 1, (x + w) >= LOGW - b - 1 };
+}
+
+// How many pixels the tab (or rounding) pulls in at row j: PLAT_TAB_NOTCH at the
+// very top/bottom, tapering to 0 a couple of rows in — the "corner + 2 neighbours".
+int platCornerPull(int j, int h) {
+    int top = PLAT_TAB_NOTCH - j;
+    int bot = PLAT_TAB_NOTCH - (h - 1 - j);
+    return std::clamp(std::max(top, bot), 0, PLAT_TAB_EXT);
+}
+
 void drawPlatformShaded(SDL_Renderer* r, const SDL_FRect& pl, int screen) {
     const auto& pal = borderPaletteForScreen(screen);
     const int x = (int)std::round(pl.x);
     const int y = (int)std::round(pl.y);
     const int w = std::max(1, (int)std::round(pl.w));
     const int h = std::max(1, (int)std::round(pl.h));
+    // A side that meets the frame is snapped to the exact frame inner edge (not
+    // the rounded platform edge, which can fall a sub-pixel short and leave a gap)
+    // and left square — its over-frame tab carries the rounding instead.
+    const EdgeTouch touch = platformEdgeTouch(x, w);
 
-    // Top bright -> bottom dark, matching original platform shading feel.
-    for (int i = 0; i < 8; ++i) {
-        int y0 = y + (h * i) / 8;
-        int y1 = y + (h * (i + 1)) / 8;
-        int bh = std::max(1, y1 - y0);
-        setCol(r, pal[i]);
-        fillR(r, (float)x, (float)y0, (float)w, (float)bh);
+    // Top bright -> bottom dark, matching original platform shading feel. Drawn
+    // scanline by scanline so the top and bottom edge rows can be inset by 1px,
+    // dropping the four corner pixels for a slightly rounded look.
+    for (int j = 0; j < h; ++j) {
+        int band = std::min(7, (j * 8) / h);
+        setCol(r, pal[band]);
+        bool edge = (j == 0 || j == h - 1);
+        float left  = touch.left  ? BORDER_SOLID_X          : (float)x + (edge ? 1.0f : 0.0f);
+        float right = touch.right ? LOGW - BORDER_SOLID_X    : (float)(x + w) - (edge ? 1.0f : 0.0f);
+        if (right > left) fillR(r, left, (float)(y + j), right - left, 1.0f);
     }
+}
 
-    // Subtle underside accent to reinforce the bottom shadow.
-    setCol(r, pal[7]);
-    fillR(r, (float)x, (float)(y + h - 1), (float)w, 1.0f);
-
-    // Pin exact corner pixels so platforms keep square arcade corners.
-    setCol(r, pal[0]);
-    fillR(r, (float)x, (float)y, 1.0f, 1.0f);
-    fillR(r, (float)(x + w - 1), (float)y, 1.0f, 1.0f);
-    setCol(r, pal[7]);
-    fillR(r, (float)x, (float)(y + h - 1), 1.0f, 1.0f);
-    fillR(r, (float)(x + w - 1), (float)(y + h - 1), 1.0f, 1.0f);
+// Draw the over-frame extension for platforms that reach a side frame. Called in
+// screen space after the border so the tab sits on top of it; the tip is notched
+// so the frame shows through, rounding the join.
+void drawPlatformFrameTab(SDL_Renderer* r, const SDL_FRect& pl, int screen) {
+    const int wx = (int)std::round(pl.x);
+    const int ww = std::max(1, (int)std::round(pl.w));
+    const EdgeTouch touch = platformEdgeTouch(wx, ww);
+    if (!touch.left && !touch.right) return;
+    const auto& pal = borderPaletteForScreen(screen);
+    // The platform's on-screen rect (world scaled into the HUD-offset play band).
+    const int sy = (int)std::round(HUD_H + pl.y * GAME_H / (float)LOGH);
+    const int sh = std::max(1, (int)std::round(pl.h * GAME_H / (float)LOGH));
+    const int leftEdge  = (int)std::round(pl.x * GAME_W / (float)LOGW);          // ~8
+    const int rightEdge = (int)std::round((pl.x + pl.w) * GAME_W / (float)LOGW); // ~216
+    for (int j = 0; j < sh; ++j) {
+        int band = std::min(7, (j * 8) / sh);
+        int len = PLAT_TAB_EXT - platCornerPull(j, sh);   // narrower near the corners
+        if (len <= 0) continue;
+        setCol(r, pal[band]);
+        if (touch.left)  fillR(r, (float)(leftEdge - len), (float)(sy + j), (float)len, 1.0f);
+        if (touch.right) fillR(r, (float)rightEdge,        (float)(sy + j), (float)len, 1.0f);
+    }
 }
 
 void buildBackground(SDL_Renderer* ren) {
@@ -2250,6 +2288,11 @@ void render(SDL_Renderer* r, const Game& g) {
 
     useScreen(r);
     drawPlayfieldBorder(r, currentScreen(g));
+    // Platforms meeting a side frame poke a rounded tab over it (drawn on top).
+    for (const SDL_FRect& pl : g.platforms) {
+        if (pl.y >= FLOOR_TOP - 1.0f) continue;
+        drawPlatformFrameTab(r, pl, currentScreen(g));
+    }
     useWorld(r);
 
     // Floating score popups (kills, bombs, power).
