@@ -2077,7 +2077,7 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     // ROUND (green) over -N- (white), centered just right of the life icons.
     drawTextCentered(r, "ROUND", 132, l1, 1, {80, 230, 90});
     std::snprintf(buf, sizeof(buf), "-%d-", g.level);
-    drawTextCentered(r, buf, 132, l2, 1, {60, 235, 255});
+    drawTextCentered(r, buf, 132, l2, 1, {0, 139, 255});
 
     // HI-SCORE (yellow) over the current score (white), at the right. The
     // score has no leading zeros and is right-aligned under the label.
