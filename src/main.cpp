@@ -54,7 +54,6 @@
 #include "bonuse_png.h"      // bonus "E" (extra life) spin frames (4 x, bonusE.png)
 #include "bonuss_png.h"      // bonus "S" (special) spin frames (4 x, bonusS.png)
 #include "bonustaken_png.h"  // 6-frame flash shown when any bonus is collected
-#include "coins_png.h"       // coin spin frames frozen enemies turn into (7 x, coins.png)
 #include "bombs_png.h"       // bomb sprites (7 x 12x16): frame 0 static, 1-6 lit
 #include "initenemy_png.h"   // 4-frame spawn flash shown before a mummy appears fuse
 #include "start_png.h"       // "START!" intro: two interlaced halves (start.png)
@@ -696,6 +695,16 @@ void buildSprites(SDL_Renderer* ren) {
             g_gameOverTex = texFromSurface(ren, f);
             SDL_DestroySurface(f);
         }
+
+        // Coin spin a frozen enemy becomes (sprites.json "coin"): 7 cells of
+        // 14x14 at x=307, y=115. Same source atlas as everything above.
+        for (int i = 0; i < 7; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(14, 14, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{307 + i * 14, 115, 14, 14};
+            SDL_BlitSurface(atlas, &src, f, nullptr);
+            g_coinFrames[i] = {14, 14, texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+        }
         SDL_DestroySurface(atlas);
         stbi_image_free(spx);
     } else {
@@ -748,25 +757,6 @@ void buildSprites(SDL_Renderer* ren) {
         std::fprintf(stderr, "bonus taken sprite decode failed\n");
     }
 
-    // Coin frames (coins.png): 7 cells, 12x12, what frozen enemies become.
-    int cw = 0, ch = 0, cc = 0;
-    stbi_uc* cpx = stbi_load_from_memory(coins_png, (int)coins_png_len,
-                                         &cw, &ch, &cc, 4);
-    if (cpx) {
-        SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(cw, ch, SDL_PIXELFORMAT_RGBA32, cpx, cw * 4);
-        for (int i = 0; i < 7; ++i) {
-            SDL_Surface* f = SDL_CreateSurface(12, 12, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{1 + i * 14, 1, 12, 12};   // frames at x=1,15,...,85
-            SDL_BlitSurface(strip, &src, f, nullptr);
-            g_coinFrames[i] = {12, 12, texFromSurface(ren, f)};
-            SDL_DestroySurface(f);
-        }
-        SDL_DestroySurface(strip);
-        stbi_image_free(cpx);
-    } else {
-        std::fprintf(stderr, "coin sprite decode failed\n");
-    }
 
     // Bomb frames (bombs.png): 7 cells, 12x16, at x = 2 + i*20. Frame 0 is the
     // resting bomb; frames 1-6 are the lit fuse animation.
