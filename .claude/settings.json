@@ -82,7 +82,8 @@
       "Bash(xxd -i -n bonuss_png assets/bonusS.png)",
       "Bash(xxd -i -n bonustaken_png assets/bonusTaken.png)",
       "Bash(./bombjack --selftest 3000)",
-      "Bash(./bombjack --selftest)"
+      "Bash(./bombjack --selftest)",
+      "Bash(sed -n '/Title logo: cropped from the shared atlas/,/^    }$/p' src/main.cpp)"
     ],
     "additionalDirectories": [
       "/tmp",

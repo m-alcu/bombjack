@@ -45,10 +45,7 @@
 #include "stb_image.h"
 #pragma GCC diagnostic pop
 #include "screens_png.h"
-#include "live_png.h"        // little Jack life icon for the HUD (31x32)
-#include "mummy_png.h"       // mummy enemy frames (8 x 16x16) from the original
 #include "bonus_png.h"       // bonus "B" coin spin frames (4 x, from bonusSprite.png)
-#include "initenemy_png.h"   // 4-frame spawn flash shown before a mummy appears fuse
 #include "start_png.h"       // "START!" intro: two interlaced halves (start.png)
 #include "pickcoin_png.h"    // 4-frame coin-pickup sparkle (white, tinted yellow)
 // banner/bombs/bonusE/bonusS/bonustaken/explosion now cropped from the atlas
@@ -452,8 +449,9 @@ constexpr float MUMMY_WALK_FRAME = 0.1f;      // 0.3s / 3 frames (arcade rate)
 SDL_Texture* g_mummyTex[MF_COUNT] = {};       // mummy bodies (natural colours)
 SDL_Texture* g_mummyEye[MF_COUNT] = {};       // mummy eye overlays
 
-// Spawn-flash frames (InitEnemy.png): 4 cells, baked as white masks so they can
-// be tinted to any basic colour per spawn.
+// Spawn-flash frames (atlas "ennemy_appearing"): 4 frames, baked as white masks
+// so they can be tinted to any basic colour per spawn. INIT_FW/FH is the common
+// cell each (variable-size) atlas frame is centred into.
 constexpr int INIT_FW = 33, INIT_FH = 32;
 SDL_Texture* g_initEnemyTex[4] = {};
 
@@ -741,6 +739,25 @@ void buildSprites(SDL_Renderer* ren) {
             SDL_DestroySurface(f);
         }
 
+        // Mummy frames ("mummy_idle/move_*/falling"): tight boxes top-aligned at
+        // y=53, centred into a common 16x16 cell (same scheme as the bird).
+        static const int mummyRect[MF_COUNT][4] = {
+            {6, 53, 12, 15},                                          // IDLE
+            {45, 53, 11, 15}, {61, 53, 11, 15}, {76, 53, 13, 15},     // WALK_R0..2
+            {92, 53, 11, 15}, {108, 53, 11, 15}, {123, 53, 13, 15},   // WALK_L0..2
+            {25, 53, 14, 16},                                         // FALL
+        };
+        for (int i = 0; i < MF_COUNT; ++i) {
+            const int w = mummyRect[i][2], h = mummyRect[i][3];
+            SDL_Surface* f = SDL_CreateSurface(MUMMY_FW, MUMMY_FH, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{mummyRect[i][0], mummyRect[i][1], w, h};
+            SDL_Rect dst{(MUMMY_FW - w) / 2, (MUMMY_FH - h) / 2, w, h};   // centre in the cell
+            SDL_BlitSurface(atlas, &src, f, &dst);
+            g_mummyTex[i] = texFromSurface(ren, f);
+            g_mummyEye[i] = makeEyeMask(ren, f);
+            SDL_DestroySurface(f);
+        }
+
         // Power orb ("power" 12x12): classify pixels into 4 luminance bands, then
         // prebake a recoloured ball per colour family and cycle phase. Stepping
         // the phase at runtime cycles the shades (the orb itself stays upright).
@@ -775,6 +792,29 @@ void buildSprites(SDL_Renderer* ren) {
                     SDL_DestroySurface(s);
                 }
             }
+        }
+
+        // Spawn flash ("ennemy_appearing"): 4 growing frames, magenta-shaded
+        // (green=0). Centre each tight box into a common INIT cell and bake a
+        // white mask whose brightness is (red+blue)/2 so a per-spawn colour mod
+        // can tint it to any basic colour.
+        static const int initRect[4][4] = {
+            {40, 158, 18, 29}, {65, 157, 29, 31}, {101, 158, 29, 29}, {138, 159, 28, 28}
+        };
+        for (int i = 0; i < 4; ++i) {
+            const int w = initRect[i][2], h = initRect[i][3];
+            SDL_Surface* f = SDL_CreateSurface(INIT_FW, INIT_FH, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{initRect[i][0], initRect[i][1], w, h};
+            SDL_Rect dst{(INIT_FW - w) / 2, (INIT_FH - h) / 2, w, h};   // centre in the cell
+            SDL_BlitSurface(atlas, &src, f, &dst);
+            for (int y = 0; y < f->h; ++y)
+                for (int x = 0; x < f->w; ++x) {
+                    Uint8* p = (Uint8*)f->pixels + y * f->pitch + x * 4;
+                    Uint8 v = (Uint8)((p[0] + p[2]) / 2);   // red+blue -> brightness
+                    p[0] = p[1] = p[2] = v;
+                }
+            g_initEnemyTex[i] = texFromSurface(ren, f);
+            SDL_DestroySurface(f);
         }
 
         SDL_DestroySurface(atlas);
@@ -874,55 +914,9 @@ void buildSprites(SDL_Renderer* ren) {
 
     // Bird flap frames are cropped from the shared atlas in the block above.
 
-    // Mummy frames: slice the embedded strip into MF_COUNT cells.
-    int mw = 0, mh = 0, mc = 0;
-    stbi_uc* mpx = stbi_load_from_memory(mummy_png, (int)mummy_png_len,
-                                         &mw, &mh, &mc, 4);
-    if (mpx) {
-        SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(mw, mh, SDL_PIXELFORMAT_RGBA32, mpx, mw * 4);
-        for (int i = 0; i < MF_COUNT; ++i) {
-            SDL_Surface* f = SDL_CreateSurface(MUMMY_FW, MUMMY_FH, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{i * MUMMY_FW, 0, MUMMY_FW, MUMMY_FH};
-            SDL_BlitSurface(strip, &src, f, nullptr);
-            g_mummyTex[i] = texFromSurface(ren, f);
-            g_mummyEye[i] = makeEyeMask(ren, f);
-            SDL_DestroySurface(f);
-        }
-        SDL_DestroySurface(strip);
-        stbi_image_free(mpx);
-    } else {
-        std::fprintf(stderr, "mummy sprite decode failed\n");
-    }
+    // Mummy frames are cropped from the shared atlas in the block above.
 
-    // Spawn flash (InitEnemy.png): 4 cells. The art is magenta-shaded; convert
-    // each pixel to a white mask whose brightness preserves the shading (green
-    // is always 0, so intensity comes from the red+blue channels), letting a
-    // per-spawn colour mod tint it to any basic colour.
-    int iw = 0, ih = 0, ic = 0;
-    stbi_uc* ipx = stbi_load_from_memory(initenemy_png, (int)initenemy_png_len,
-                                         &iw, &ih, &ic, 4);
-    if (ipx) {
-        SDL_Surface* strip =
-            SDL_CreateSurfaceFrom(iw, ih, SDL_PIXELFORMAT_RGBA32, ipx, iw * 4);
-        for (int i = 0; i < 4; ++i) {
-            SDL_Surface* f = SDL_CreateSurface(INIT_FW, INIT_FH, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{i * INIT_FW, 0, INIT_FW, INIT_FH};
-            SDL_BlitSurface(strip, &src, f, nullptr);
-            for (int y = 0; y < f->h; ++y)
-                for (int x = 0; x < f->w; ++x) {
-                    Uint8* p = (Uint8*)f->pixels + y * f->pitch + x * 4;
-                    Uint8 v = (Uint8)((p[0] + p[2]) / 2);   // red+blue -> brightness
-                    p[0] = p[1] = p[2] = v;
-                }
-            g_initEnemyTex[i] = texFromSurface(ren, f);
-            SDL_DestroySurface(f);
-        }
-        SDL_DestroySurface(strip);
-        stbi_image_free(ipx);
-    } else {
-        std::fprintf(stderr, "init-enemy sprite decode failed\n");
-    }
+    // The spawn flash is cropped from the shared atlas in the block above.
 }
 
 void drawSprite(SDL_Renderer* r, SpriteId id, float x, float y, float w, float h,
@@ -948,7 +942,7 @@ constexpr float BANNER_ROT = 0.05f;   // seconds per rotation step (arcade rate)
 SDL_Texture* g_bannerTex[BANNER_PHASES] = {};
 
 // Jack life icon (31x32, black colour-keyed to transparent) shown in the HUD.
-constexpr int LIVE_W = 31, LIVE_H = 32;
+constexpr int LIVE_W = 16, LIVE_H = 16;   // atlas life icon at (1,3)
 SDL_Texture* g_liveTex = nullptr;
 
 const std::array<Color, 8>& borderPaletteForScreen(int screen) {
@@ -1094,6 +1088,20 @@ void buildBackground(SDL_Renderer* ren) {
     for (int y = 0; y < bh; ++y)
         std::memcpy(&logo[(size_t)y * bw * 4],
                     apx + ((size_t)(LY + y) * aw + LX) * 4, (size_t)bw * 4);
+
+    // Jack life icon for the HUD (atlas life sprite at 1,3, 16x16) from the same atlas.
+    {
+        const int LIX = 1, LIY = 3;
+        std::vector<Uint8> li((size_t)LIVE_W * LIVE_H * 4);
+        for (int y = 0; y < LIVE_H; ++y)
+            std::memcpy(&li[(size_t)y * LIVE_W * 4],
+                        apx + ((size_t)(LIY + y) * aw + LIX) * 4, (size_t)LIVE_W * 4);
+        SDL_Surface* ls = SDL_CreateSurfaceFrom(LIVE_W, LIVE_H, SDL_PIXELFORMAT_RGBA32,
+                                                li.data(), LIVE_W * 4);
+        g_liveTex = SDL_CreateTextureFromSurface(ren, ls);
+        SDL_SetTextureScaleMode(g_liveTex, SDL_SCALEMODE_NEAREST);
+        SDL_DestroySurface(ls);
+    }
     stbi_image_free(apx);
 
     const Uint8 blues[BANNER_PHASES][3] = {{0, 82, 255}, {0, 140, 255}, {0, 189, 255}};
@@ -1116,20 +1124,6 @@ void buildBackground(SDL_Renderer* ren) {
         SDL_DestroySurface(bs);
     }
 
-    // Jack life icon.
-    int lw = 0, lh = 0, lc = 0;
-    stbi_uc* lpx = stbi_load_from_memory(live_png, (int)live_png_len,
-                                         &lw, &lh, &lc, 4);
-    if (lpx) {
-        SDL_Surface* ls = SDL_CreateSurfaceFrom(lw, lh, SDL_PIXELFORMAT_RGBA32,
-                                                lpx, lw * 4);
-        g_liveTex = SDL_CreateTextureFromSurface(ren, ls);
-        SDL_SetTextureScaleMode(g_liveTex, SDL_SCALEMODE_NEAREST);
-        SDL_DestroySurface(ls);
-        stbi_image_free(lpx);
-    } else {
-        std::fprintf(stderr, "life icon decode failed\n");
-    }
 }
 
 // ---------------------------------------------------------------------------
