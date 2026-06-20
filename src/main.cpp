@@ -334,7 +334,10 @@ enum JackFrame {
 constexpr int JACK_FW = 16, JACK_FH = 15;     // native frame size in the strip
 constexpr float JACK_WALK_FRAME = 0.125f;     // 0.5s / 4 frames (arcade rate)
 SDL_Texture* g_jackTex[JF_COUNT] = {};
-SDL_Texture* g_jackTint[JF_COUNT] = {};     // desaturated Jack, colour-modded during the freeze
+// During the freeze, Jack is monochrome in the orb's colour with his shades
+// cycling. Per frame [JF_COUNT] and per cycle phase [4]: a white banded mask
+// (4 brightness bands rotated by phase) that a colour-mod tints to the hue.
+SDL_Texture* g_jackPhase[JF_COUNT][4] = {};
 
 struct JackVarFrame { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 JackVarFrame g_jackDance[3] = {};
@@ -529,19 +532,32 @@ void buildSprites(SDL_Renderer* ren) {
             SDL_Rect src{i * JACK_FW, 0, JACK_FW, JACK_FH};
             SDL_BlitSurface(strip, &src, f, nullptr);
             g_jackTex[i] = texFromSurface(ren, f);
-            // Desaturated white twin: a colour-mod tints it to the grabbed orb's
-            // colour during the freeze, preserving Jack's shading.
-            SDL_Surface* sv = SDL_CreateSurface(JACK_FW, JACK_FH, SDL_PIXELFORMAT_RGBA32);
+            // Frozen twin: classify pixels into 4 luminance bands, then bake 4
+            // white phase-frames whose bands rotate. A colour-mod tints them to
+            // the orb's hue at draw time, so Jack's shades cycle in that colour.
+            float lo = 1e9f, hi = -1e9f;
+            auto lum = [](const Uint8* p) { return 0.30f*p[0] + 0.59f*p[1] + 0.11f*p[2]; };
             for (int y = 0; y < JACK_FH; ++y)
                 for (int x = 0; x < JACK_FW; ++x) {
                     const Uint8* sp = (const Uint8*)f->pixels + y * f->pitch + x * 4;
-                    Uint8* dp = (Uint8*)sv->pixels + y * sv->pitch + x * 4;
-                    float L = 0.30f * sp[0] + 0.59f * sp[1] + 0.11f * sp[2];
-                    float l = std::min(1.0f, L / 255.0f + 0.25f);   // lift toward bright
-                    dp[0] = dp[1] = dp[2] = (Uint8)(l * 255); dp[3] = sp[3];
+                    if (sp[3] > 0) { float L = lum(sp); lo = std::min(lo, L); hi = std::max(hi, L); }
                 }
-            g_jackTint[i] = texFromSurface(ren, sv);
-            SDL_DestroySurface(sv);
+            float span = std::max(1.0f, hi - lo);
+            const float bf[4] = {0.45f, 0.65f, 0.83f, 1.0f};   // 4 brightness shades
+            for (int ph = 0; ph < 4; ++ph) {
+                SDL_Surface* sv = SDL_CreateSurface(JACK_FW, JACK_FH, SDL_PIXELFORMAT_RGBA32);
+                for (int y = 0; y < JACK_FH; ++y)
+                    for (int x = 0; x < JACK_FW; ++x) {
+                        const Uint8* sp = (const Uint8*)f->pixels + y * f->pitch + x * 4;
+                        Uint8* dp = (Uint8*)sv->pixels + y * sv->pitch + x * 4;
+                        if (sp[3] == 0) { dp[0]=dp[1]=dp[2]=dp[3]=0; continue; }
+                        int band = std::min(3, (int)((lum(sp) - lo) / span * 4.0f));
+                        Uint8 v = (Uint8)(bf[(band + ph) & 3] * 255.0f);
+                        dp[0] = dp[1] = dp[2] = v; dp[3] = 255;
+                    }
+                g_jackPhase[i][ph] = texFromSurface(ren, sv);
+                SDL_DestroySurface(sv);
+            }
             SDL_DestroySurface(f);
         }
         SDL_DestroySurface(strip);
@@ -1706,11 +1722,14 @@ void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
     // drawn facing the right way, so no horizontal flip is needed.
     const float dw = 26.0f, dh = 28.0f;
     SDL_FRect dst{p.x + PW / 2 - dw / 2, p.y + PH - dh, dw, dh};
-    // While enemies are frozen, Jack takes on the grabbed orb's colour.
-    if (frozen && g_jackTint[f]) {
-        SDL_SetTextureColorMod(g_jackTint[f], freezeColor.r, freezeColor.g, freezeColor.b);
-        SDL_RenderTexture(r, g_jackTint[f], nullptr, &dst);
-        SDL_SetTextureColorMod(g_jackTint[f], 255, 255, 255);
+    // While enemies are frozen, Jack is monochrome in the grabbed orb's colour
+    // with his shades cycling, so he shimmers in that colour.
+    if (frozen && g_jackPhase[f][0]) {
+        int ph = (int)(t / 0.1f) & 3;                 // rotate the shades ~10/s
+        SDL_Texture* tex = g_jackPhase[f][ph];
+        SDL_SetTextureColorMod(tex, freezeColor.r, freezeColor.g, freezeColor.b);
+        SDL_RenderTexture(r, tex, nullptr, &dst);
+        SDL_SetTextureColorMod(tex, 255, 255, 255);
     } else if (g_jackTex[f]) {
         SDL_RenderTexture(r, g_jackTex[f], nullptr, &dst);
     }
