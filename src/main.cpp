@@ -52,7 +52,8 @@
 #include "mummy_png.h"       // mummy enemy frames (8 x 16x16) from the original
 #include "bonus_png.h"       // bonus "B" coin spin frames (4 x, from bonusSprite.png)
 #include "coins_png.h"       // coin spin frames frozen enemies turn into (7 x, coins.png)
-#include "bombs_png.h"       // bomb sprites (7 x 12x16): frame 0 static, 1-6 lit fuse
+#include "bombs_png.h"       // bomb sprites (7 x 12x16): frame 0 static, 1-6 lit
+#include "initenemy_png.h"   // 4-frame spawn flash shown before a mummy appears fuse
 #include "start_png.h"       // "START!" intro: two interlaced halves (start.png)
 #include "powerball_png.h"   // the P power-orb sprite (16x16), tinted per type
 #include "explosion_png.h"   // 3-frame bomb-clear explosion (small -> big)
@@ -146,6 +147,7 @@ constexpr int KILL_POINTS[] = {100, 200, 300, 500, 800, 1200, 2000};
 constexpr int POWER_POINTS[] = {100, 200, 300, 500, 800, 1000, 2000};
 
 // Mummies drop in over time and transform into flying chasers on the ground.
+constexpr float INIT_ENEMY_TIME = 0.6f;     // 4-frame spawn flash before a mummy appears
 constexpr float MUMMY_APPEAR_TIME = 1.1f;   // pop-in pause before it moves
 constexpr float MUMMY_DISAPPEAR_TIME = 0.5f; // bottom-floor vanish before transform
 constexpr float MUMMY_SPAWN_DELAY = 3.6f;   // seconds between mummy spawns
@@ -156,6 +158,13 @@ enum State { TITLE, PLAYING, ROUNDCLEAR, GAMEOVER };
 enum DeathPhase { DP_NONE, DP_DANCING, DP_FALLING, DP_DEAD, DP_WAIT };
 
 struct Color { Uint8 r, g, b; };
+
+// Basic colours the spawn flash (EP_INIT) picks from at random.
+constexpr Color BASIC_COLORS[] = {
+    {255,  60,  60}, {60, 255,  60}, {80, 120, 255},  // red, green, blue
+    {255, 235,  60}, {60, 235, 255}, {255, 110, 255},  // yellow, cyan, magenta
+    {255, 160,  50}, {255, 255, 255},                  // orange, white
+};
 
 // The 7 Power-orb colours, by family index (matching POWER_POINTS): 0 blue=100,
 // 1 red=200, 2 purple=300, 3 green=500, 4 turquoise=800, 5 yellow=1000,
@@ -179,7 +188,8 @@ struct Bomb { float x, y; bool collected; };  // x,y = center
 
 // Enemy kinds match the level data's transform sequence (see levels_data.h).
 enum EKind  { EK_BIRD, EK_MUMMY, EK_SPHERE, EK_ORB, EK_HORN, EK_CLUB, EK_UFO };
-enum EPhase { EP_FLY, EP_APPEAR, EP_WALK, EP_FALL, EP_DISAPPEAR };  // mummy lifecycle; others fly
+// EP_INIT plays a 4-frame spawn flash; the rest are the mummy lifecycle (others fly).
+enum EPhase { EP_INIT, EP_FLY, EP_APPEAR, EP_WALK, EP_FALL, EP_DISAPPEAR };
 
 struct Enemy {
     float x, y, vx, vy, r;
@@ -188,6 +198,7 @@ struct Enemy {
     float timer  = 0.0f;     // appear countdown
     int   bounces = 0;       // platform direction-changes left before falling
     int   becomes = EK_SPHERE;  // what this mummy transforms into
+    Color spawnTint{255, 255, 255};  // random basic colour of the EP_INIT flash
 };
 
 struct Popup { float x, y, age = 0.0f; int value = 0; };  // floating score text
@@ -389,6 +400,11 @@ constexpr int MUMMY_FW = 16, MUMMY_FH = 16;
 constexpr float MUMMY_WALK_FRAME = 0.1f;      // 0.3s / 3 frames (arcade rate)
 SDL_Texture* g_mummyTex[MF_COUNT] = {};       // mummy bodies (natural colours)
 SDL_Texture* g_mummyEye[MF_COUNT] = {};       // mummy eye overlays
+
+// Spawn-flash frames (InitEnemy.png): 4 cells, baked as white masks so they can
+// be tinted to any basic colour per spawn.
+constexpr int INIT_FW = 33, INIT_FH = 32;
+SDL_Texture* g_initEnemyTex[4] = {};
 
 // Current red intensity of the pulsing enemy eyes at time t.
 inline Uint8 eyePulse(float t) {
@@ -790,6 +806,35 @@ void buildSprites(SDL_Renderer* ren) {
     } else {
         std::fprintf(stderr, "mummy sprite decode failed\n");
     }
+
+    // Spawn flash (InitEnemy.png): 4 cells. The art is magenta-shaded; convert
+    // each pixel to a white mask whose brightness preserves the shading (green
+    // is always 0, so intensity comes from the red+blue channels), letting a
+    // per-spawn colour mod tint it to any basic colour.
+    int iw = 0, ih = 0, ic = 0;
+    stbi_uc* ipx = stbi_load_from_memory(initenemy_png, (int)initenemy_png_len,
+                                         &iw, &ih, &ic, 4);
+    if (ipx) {
+        SDL_Surface* strip =
+            SDL_CreateSurfaceFrom(iw, ih, SDL_PIXELFORMAT_RGBA32, ipx, iw * 4);
+        for (int i = 0; i < 4; ++i) {
+            SDL_Surface* f = SDL_CreateSurface(INIT_FW, INIT_FH, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{i * INIT_FW, 0, INIT_FW, INIT_FH};
+            SDL_BlitSurface(strip, &src, f, nullptr);
+            for (int y = 0; y < f->h; ++y)
+                for (int x = 0; x < f->w; ++x) {
+                    Uint8* p = (Uint8*)f->pixels + y * f->pitch + x * 4;
+                    Uint8 v = (Uint8)((p[0] + p[2]) / 2);   // red+blue -> brightness
+                    p[0] = p[1] = p[2] = v;
+                }
+            g_initEnemyTex[i] = texFromSurface(ren, f);
+            SDL_DestroySurface(f);
+        }
+        SDL_DestroySurface(strip);
+        stbi_image_free(ipx);
+    } else {
+        std::fprintf(stderr, "init-enemy sprite decode failed\n");
+    }
 }
 
 void drawSprite(SDL_Renderer* r, SpriteId id, float x, float y, float w, float h,
@@ -1109,14 +1154,16 @@ void spawnMummy(Game& g) {
     const leveldata::Layout& lay = currentLayout(g);
     Enemy e;
     e.kind = EK_MUMMY;
-    e.phase = EP_APPEAR;
-    e.timer = MUMMY_APPEAR_TIME;
+    e.phase = EP_INIT;                            // spawn flash, then EP_APPEAR
+    e.timer = INIT_ENEMY_TIME;
     e.r = 10.0f;
     e.x = lay.mummyx[g.p.x < LOGW / 2 ? 1 : 0];   // drop in away from Jack
     e.y = 90.0f;
     e.vx = e.vy = 0.0f;
     e.bounces = L.bouncing;
     e.becomes = L.mummies[g.transformIdx % L.nmummies];
+    std::uniform_int_distribution<int> pick(0, (int)std::size(BASIC_COLORS) - 1);
+    e.spawnTint = BASIC_COLORS[pick(g.rng)];
     g.transformIdx++;
     g.enemies.push_back(e);
 }
@@ -1140,6 +1187,14 @@ void transformMummy(Game& g, Enemy& e) {
 
 // Mummy gravity + platform walk/fall, transforming when it reaches the ground.
 void updateMummy(Game& g, Enemy& e, float dt) {
+    if (e.phase == EP_INIT) {                     // spawn flash before the mummy
+        e.timer -= dt;
+        if (e.timer <= 0) {
+            e.phase = EP_APPEAR;
+            e.timer = MUMMY_APPEAR_TIME;
+        }
+        return;
+    }
     if (e.phase == EP_APPEAR) {
         e.timer -= dt;
         if (e.timer <= 0) {
@@ -1595,9 +1650,9 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             else                    updateFlyer(g, e, dt, pcx, pcy);
         }
 
-        if (e.phase == EP_APPEAR || e.phase == EP_DISAPPEAR) {
+        if (e.phase == EP_INIT || e.phase == EP_APPEAR || e.phase == EP_DISAPPEAR) {
             ++it;
-            continue;   // intangible while appearing/disappearing
+            continue;   // intangible while flashing in / appearing / disappearing
         }
 
         float ex = pcx - e.x, ey = pcy - e.y;
@@ -1779,8 +1834,21 @@ void drawMummy(SDL_Renderer* r, const Enemy& e, float t) {
     if (eye) drawTexTinted(r, eye, dst, false, eyePulse(t), 0, 0);
 }
 
+// The spawn flash: the 4 InitEnemy frames play once over INIT_ENEMY_TIME, tinted
+// to this spawn's random basic colour, where the mummy is about to appear.
+void drawInitEnemy(SDL_Renderer* r, const Enemy& e) {
+    float prog = 1.0f - std::clamp(e.timer / INIT_ENEMY_TIME, 0.0f, 1.0f);
+    int frame = std::min(3, (int)(prog * 4));
+    SDL_Texture* tex = g_initEnemyTex[frame];
+    if (!tex) return;
+    const float w = INIT_FW * SPRITE_AR, h = (float)INIT_FH;
+    SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
+    drawTexTinted(r, tex, dst, false, e.spawnTint.r, e.spawnTint.g, e.spawnTint.b);
+}
+
 void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
                float freezeTimer) {
+    if (e.phase == EP_INIT) { drawInitEnemy(r, e); return; }
     // Mummies flash white as they pop in; flyers blink as the freeze wears off.
     if (e.phase == EP_APPEAR && std::fmod(t, 0.12f) < 0.06f) return;
     if (frozen && freezeTimer < 1.0f && std::fmod(t, 0.16f) < 0.08f) return;
