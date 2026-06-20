@@ -433,6 +433,13 @@ constexpr int BIRD_FW = 16, BIRD_FH = 16;
 constexpr int BIRD_DECIDE_FRAMES = 250;         // re-aim heading toward Jack every N frames
 constexpr float BIRD_FLAP_FRAME = 0.1f;       // 0.3s / 3 frames (arcade rate)
 constexpr float BIRD_PULSE_STEP = 0.06f;      // colour-pulse cadence (arcade rate)
+// Rectangle the bird may spawn within (random angle or direction-forced corner).
+constexpr float BIRD_SPAWN_L = 60.0f,        BIRD_SPAWN_R = LOGW - 60.0f;
+constexpr float BIRD_SPAWN_T = 70.0f,        BIRD_SPAWN_B = LOGH - 90.0f;
+// Bird travel speed for a level (already includes the half-speed tuning).
+inline float birdSpeed(int level) {
+    return std::min(72.0f + level * 8.0f, 150.0f) * 0.5f;
+}
 // Red intensity of the eye pulse, looping bright -> black -> bright (BirdToColors).
 constexpr Uint8 EYE_PULSE[] = {255, 222, 189, 156, 115, 82, 49, 0,
                                49, 82, 115, 156, 189, 222};
@@ -1220,12 +1227,12 @@ void spawnBombs(Game& g) {
 
 Enemy makeBird(Game& g, float ang) {
     std::uniform_real_distribution<float> sign(-1.0f, 1.0f);
-    float speed = std::min(72.0f + g.level * 8.0f, 150.0f);
+    float speed = birdSpeed(g.level);
     Enemy e;
     e.kind = EK_BIRD;
     e.r = 11.0f;
-    e.x = 60.0f + (LOGW - 120.0f) * (0.5f + 0.5f * std::cos(ang));
-    e.y = 70.0f + (LOGH - 160.0f) * (0.5f + 0.5f * std::sin(ang));
+    e.x = BIRD_SPAWN_L + (BIRD_SPAWN_R - BIRD_SPAWN_L) * (0.5f + 0.5f * std::cos(ang));
+    e.y = BIRD_SPAWN_T + (BIRD_SPAWN_B - BIRD_SPAWN_T) * (0.5f + 0.5f * std::sin(ang));
     e.vx = std::cos(ang) * speed + sign(g.rng) * 10.0f;
     e.vy = std::sin(ang) * speed + sign(g.rng) * 10.0f;
     return e;
@@ -1264,15 +1271,15 @@ void placeBirdFromHold(Game& g) {
     for (Enemy& e : g.enemies) if (e.kind == EK_BIRD) { bird = &e; break; }
     if (!bird) return;
 
-    const float leftX = 60.0f, rightX = LOGW - 60.0f;
-    const float topY  = 70.0f, bottomY = LOGH - 90.0f;
+    const float leftX = BIRD_SPAWN_L, rightX = BIRD_SPAWN_R;
+    const float topY  = BIRD_SPAWN_T, bottomY = BIRD_SPAWN_B;
     const float midX  = LOGW / 2.0f, midY = (topY + bottomY) / 2.0f;
     float bx = (hx > 0) ? leftX : (hx < 0) ? rightX : midX;   // horizontal: mirror
     float by;
     if (hx == 0) by = (hy < 0) ? bottomY : (hy > 0) ? topY    : midY;  // pure vert: mirror
     else         by = (hy < 0) ? topY    : (hy > 0) ? bottomY : midY;  // diagonal: keep
 
-    float speed = std::min(72.0f + g.level * 8.0f, 150.0f);
+    float speed = birdSpeed(g.level);
     bird->x = bx; bird->y = by;
     bird->vx = (bx < midX ? 1.0f : -1.0f) * speed;           // head into the field
     bird->vy = (by < midY ? 1.0f : -1.0f) * speed * 0.5f;
@@ -1489,6 +1496,12 @@ void updateMummy(Game& g, Enemy& e, float dt) {
     }
 }
 
+// AABB overlap of a body of radius r centred at (x,y) with a platform rect.
+inline bool circleOverlapsRect(float x, float y, float r, const SDL_FRect& pl) {
+    return x + r > pl.x && x - r < pl.x + pl.w &&
+           y + r > pl.y && y - r < pl.y + pl.h;
+}
+
 // Block a flying enemy against the frame borders and the platforms, bouncing it
 // off the face it crossed so it can't pass through them (like Jack / the orb).
 // (ox, oy) is the position before this step, used to pick the entry face.
@@ -1502,9 +1515,7 @@ void blockEnemy(Game& g, Enemy& e, float ox, float oy) {
 
     for (const SDL_FRect& pl : g.platforms) {
         if (pl.y >= FLOOR_TOP - 1.0f) continue;          // floor handled by B above
-        bool overlapX = e.x + e.r > pl.x && e.x - e.r < pl.x + pl.w;
-        bool overlapY = e.y + e.r > pl.y && e.y - e.r < pl.y + pl.h;
-        if (!overlapX || !overlapY) continue;
+        if (!circleOverlapsRect(e.x, e.y, e.r, pl)) continue;
 
         const float eps = 0.001f;
         bool hitTop = oy + e.r <= pl.y + eps && e.y + e.r > pl.y + eps;
@@ -1540,8 +1551,7 @@ bool flyerBlocked(const Game& g, float r, float x, float y) {
     if (x < L || x > R || y < T || y > B) return true;
     for (const SDL_FRect& pl : g.platforms) {
         if (pl.y >= FLOOR_TOP - 1.0f) continue;        // bottom floor is the B edge
-        if (x + r > pl.x && x - r < pl.x + pl.w &&
-            y + r > pl.y && y - r < pl.y + pl.h) return true;
+        if (circleOverlapsRect(x, y, r, pl)) return true;
     }
     return false;
 }
@@ -1553,7 +1563,7 @@ bool flyerBlocked(const Game& g, float r, float x, float y) {
 // cardinal staircase. Platforms are solid: if the direct step is blocked it
 // slides along the obstacle on whichever axis still makes progress.
 void updateBird(Game& g, Enemy& e, float dt, float pcx, float pcy) {
-    const float s = std::min(72.0f + g.level * 8.0f, 150.0f) * 0.5f;
+    const float s = birdSpeed(g.level);
 
     if (++e.tick >= BIRD_DECIDE_FRAMES || (e.tgtX == 0.0f && e.tgtY == 0.0f)) {
         e.tick = 0;
@@ -1836,9 +1846,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         // Bounce on platform faces (excluding the ground platform handled above).
         for (const SDL_FRect& pl : g.platforms) {
             if (pl.y >= FLOOR_TOP - 1.0f) continue;
-            bool overlapX = g.orbX + ORB_R > pl.x && g.orbX - ORB_R < pl.x + pl.w;
-            bool overlapY = g.orbY + ORB_R > pl.y && g.orbY - ORB_R < pl.y + pl.h;
-            if (!overlapX || !overlapY) continue;
+            if (!circleOverlapsRect(g.orbX, g.orbY, ORB_R, pl)) continue;
 
             // Match the Lua collision feel: resolve vertical faces first, then sides.
             const float eps = 0.001f;
