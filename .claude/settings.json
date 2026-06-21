@@ -89,7 +89,10 @@
       "Bash(grep -on \"{[0-9]*\\\\.[0-9]*f, *[0-9]*\\\\.[0-9]*f}\" levels_data.h)",
       "Bash(echo \"=== BUILD EXIT $? ===\")",
       "Bash(echo \"=== selftest exit $? ===\")",
-      "Bash(echo \"=== rendertest exit $? ===\")"
+      "Bash(echo \"=== rendertest exit $? ===\")",
+      "Bash(echo \"EXIT $?\")",
+      "Bash(DISPLAY=:1 ./bombjack --platshot 11)",
+      "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/plat.bmp'\\).save\\('/tmp/plat.png'\\); print\\('ok'\\)\")"
     ],
     "additionalDirectories": [
       "/tmp",

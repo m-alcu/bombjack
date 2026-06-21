@@ -989,6 +989,23 @@ void drawPlatformShaded(SDL_Renderer* r, const SDL_FRect& pl, int screen) {
     const int y = (int)std::round(pl.y);
     const int w = std::max(1, (int)std::round(pl.w));
     const int h = std::max(1, (int)std::round(pl.h));
+    // Vertical girders (taller than wide) shade across their width — bright left
+    // -> dark right — to match the playfield frame's vertical bars, rather than
+    // along their length. Mirrors the reference platform.lua "V" branch (a column
+    // per colour band). The top/bottom of the outer columns are inset 1px so the
+    // four corners round off like the horizontal case.
+    if (h > w) {
+        for (int i = 0; i < w; ++i) {
+            int band = std::min(7, (i * 8) / w);
+            setCol(r, pal[band]);
+            bool edge = (i == 0 || i == w - 1);
+            float top = (float)y + (edge ? 1.0f : 0.0f);
+            float bot = (float)(y + h) - (edge ? 1.0f : 0.0f);
+            if (bot > top) fillR(r, (float)(x + i), top, 1.0f, bot - top);
+        }
+        return;
+    }
+
     // A side that meets the frame is snapped to the exact frame inner edge (not
     // the rounded platform edge, which can fall a sub-pixel short and leave a gap)
     // and left square — its over-frame tab carries the rounding instead.
