@@ -22,8 +22,11 @@ the next, wrapping after the fifth.
   platform layout, bomb arrangement and backdrop — including the platform-less
   "California" stages where you must float to every bomb.
 - Collect **every bomb** in a round to advance to the next, harder round.
-- One bomb always has a **glowing fuse** — grab the lit one to raise your bonus
-  multiplier (up to x5). Grabbing an unlit bomb resets the multiplier.
+- After you grab the first bomb, one bomb always shows a **glowing fuse** that
+  lights the bombs in a fixed sequence. Grab the lit ("fire") bomb to keep the
+  chain going — fire bombs are worth 200 (vs 100) and count toward the
+  end-of-round **Special Bonus**: catch 20–23 of them and a between-round screen
+  awards 10,000–50,000 bonus points, counting up onto your score.
 - Catching bombs charges the **POWER** gauge (lit bombs charge it faster). When
   it fills, a colour-cycling **P orb** appears — grab it to **freeze every
   chaser** for a few seconds.

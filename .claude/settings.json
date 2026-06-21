@@ -85,7 +85,11 @@
       "Bash(./bombjack --selftest)",
       "Bash(sed -n '/Title logo: cropped from the shared atlas/,/^    }$/p' src/main.cpp)",
       "Bash(sed -n '/START..*intro halves/,/start sprite decode failed/p' src/main.cpp)",
-      "Bash(command -v scrot grim spectacle gnome-screenshot maim import ffmpeg)"
+      "Bash(command -v scrot grim spectacle gnome-screenshot maim import ffmpeg)",
+      "Bash(grep -on \"{[0-9]*\\\\.[0-9]*f, *[0-9]*\\\\.[0-9]*f}\" levels_data.h)",
+      "Bash(echo \"=== BUILD EXIT $? ===\")",
+      "Bash(echo \"=== selftest exit $? ===\")",
+      "Bash(echo \"=== rendertest exit $? ===\")"
     ],
     "additionalDirectories": [
       "/tmp",

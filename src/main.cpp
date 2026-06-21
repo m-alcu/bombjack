@@ -100,6 +100,13 @@ constexpr float BOMB_HALF_H = 8.0f * (float)LOGH / (float)GAME_H;
 
 constexpr float INVULN_TIME = 2.0f;     // post-hit invulnerability (s)
 constexpr float CLEAR_TIME  = 3.2f;     // round-clear banner duration (s); also paces the victory dance
+// End-of-level Special Bonus: catching bombs while their fuse is lit ("fire
+// bombs") builds a per-level count; 20..23 of them awards a big between-level
+// bonus that counts up on screen. Mirrors the reference score.lua /
+// specialbonus.lua (catched 20->10000, 21->20000, 22->30000, 23->50000 pts).
+constexpr float SB_BEGIN_TIME = 2.0f;   // box hold before the count-up starts
+constexpr float SB_END_TIME   = 1.5f;   // hold after the count-up finishes
+constexpr float SB_SCORE_TIME = 0.1f;   // seconds per 1000-pt count-up tick
 constexpr float FREEZE_TIME = 5.0f;     // enemy freeze after grabbing the P orb
 constexpr float POWER_NEEDED = 8.0f;    // lit-bomb "charge" needed to spawn a P orb
 constexpr float ORB_SPEED = 60.0f;      // moving Power orb speed (world px/s)
@@ -154,7 +161,7 @@ constexpr float MUMMY_SPAWN_DELAY = 3.6f;   // seconds between mummy spawns
 constexpr float MUMMY_WALK_SPEED  = 70.0f;  // platform walk speed (world px/s)
 constexpr float FLY_SPEED         = 120.0f; // base speed of transformed chasers
 
-enum State { TITLE, PLAYING, ROUNDCLEAR, GAMEOVER };
+enum State { TITLE, PLAYING, ROUNDCLEAR, SPECIALBONUS, GAMEOVER };
 enum DeathPhase { DP_NONE, DP_DANCING, DP_FALLING, DP_DEAD, DP_WAIT };
 
 struct Color { Uint8 r, g, b; };
@@ -213,7 +220,14 @@ struct BonusTaken { float x, y, age = 0.0f; };           // flash when a bonus i
 
 struct Game {
     int   state = TITLE;
-    int   score = 0, lives = 3, level = 1, streak = 1, bombsLeft = 0;
+    int   score = 0, lives = 3, level = 1, bombsLeft = 0;
+    // Fire-bomb chain + end-of-level Special Bonus.
+    int   litBomb = -1;                // index of the bomb whose fuse is lit (-1 = none)
+    int   catched = 0;                 // "fire bombs" caught this level (lit, in sequence)
+    int   sbState = 0;                 // SPECIALBONUS phase: 0 begin, 1 count-up, 2 end
+    float sbTimer = 0.0f;              // phase timer for the SPECIALBONUS screen
+    int   sbRemaining = 0;             // bonus points still to count up onto the score
+    int   sbCatched = 0;               // fire-bomb count shown on the bonus screen
     int   phaseStart = 0;              // total score when the current phase began
     float clearTimer = 0.0f;
     float time = 0.0f;                 // animation clock
@@ -339,16 +353,16 @@ Sprite g_sprites[SP_COUNT];
 
 // Bonus coins (4-frame spin each: B/E/S) and the boxed multiplier indicators
 // (index 0 is the "x" box, 1..5 are the digits) — cropped in loadAssets.
-Sprite g_bonusFrames[4];   // B (bonusSprite.png)
-Sprite g_bonusE[4];        // E (bonusE.png)
-Sprite g_bonusS[4];        // S (bonusS.png)
-Sprite g_bonusTaken[6];    // collect flash (bonusTaken.png)
+Sprite g_bonusFrames[4];   // B 
+Sprite g_bonusE[4];        // E 
+Sprite g_bonusS[4];        // S 
+Sprite g_bonusTaken[6];    // collect flash 
 SDL_Texture* g_multTex[6] = {};
 
-// Coin spin frames that P-frozen enemies turn into (from coins.png).
+// Coin spin frames that P-frozen enemies turn into.
 Sprite g_coinFrames[7];
 
-// Bomb sprites (bombs.png): frame 0 is the resting bomb, frames 1-6 are the lit
+// Bomb sprites: frame 0 is the resting bomb, frames 1-6 are the lit
 // fuse animation (the "fired" bomb cycling once it's the active target).
 Sprite g_bombFrames[7];
 
@@ -370,7 +384,7 @@ Sprite g_pickCoinFrames[4];
 // be tinted with a cycling arcade colour) and the yellow text layer, [0]=left.
 Sprite g_startBg[2], g_startText[2];
 
-// Jack's animation frames, mirroring the original game (bombjack-resources):
+// Jack's animation frames:
 // an idle pose, a 4-frame walk cycle per direction, and directional flying
 // (rising) / falling poses. Frames are cropped from the shared atlas ("bj_*")
 // in buildSprites, in this order.
@@ -1118,6 +1132,8 @@ void spawnBombs(Game& g) {
     for (int i = 0; i < lay.nbombs; ++i)   // already sorted by lit-up order
         g.bombs.push_back({lay.bombs[i].x, lay.bombs[i].y, false});
     g.bombsLeft = (int)g.bombs.size();
+    g.litBomb = -1;        // arcade: nothing is lit until the first bomb is grabbed
+    g.catched = 0;         // fire-bomb count resets each level
 }
 
 Enemy makeBird(Game& g, float ang) {
@@ -1222,7 +1238,6 @@ void startRound(Game& g) {
     spawnBombs(g);
     spawnEnemies(g);
     resetPlayer(g, true);
-    g.streak = 1;
     g.orbActive = false;
     g.freezeTimer = 0.0f;
     g.killCount = 0;
@@ -1524,6 +1539,46 @@ void updateFlyer(Game& g, Enemy& e, float dt, float pcx, float pcy) {
 // ---------------------------------------------------------------------------
 // Simulation
 // ---------------------------------------------------------------------------
+
+// The next bomb to light after one is caught: the lowest-order remaining bomb
+// with order >= orderMin, wrapping to the lowest remaining if none qualify.
+// Bombs are stored sorted by lit-up order (index == order), mirroring the
+// reference getNextBombToActivate. Returns -1 when the field is clear.
+int nextLitBomb(const Game& g, int orderMin) {
+    for (int j = orderMin; j < (int)g.bombs.size(); ++j)
+        if (!g.bombs[j].collected) return j;
+    for (int j = 0; j < (int)g.bombs.size(); ++j)
+        if (!g.bombs[j].collected) return j;
+    return -1;
+}
+
+// Special-bonus payout for the fire-bomb count (reference score.lua table).
+int specialBonusFor(int catched) {
+    switch (catched) {
+        case 20: return 10000;
+        case 21: return 20000;
+        case 22: return 30000;
+        case 23: return 50000;
+        default: return 0;
+    }
+}
+
+// All bombs cleared: award the Special Bonus (count-up screen) when enough fire
+// bombs were caught, otherwise go straight to the round-clear dance.
+void finishLevel(Game& g) {
+    int bonus = specialBonusFor(g.catched);
+    if (bonus > 0) {
+        g.state = SPECIALBONUS;
+        g.sbState = 0;
+        g.sbTimer = SB_BEGIN_TIME;
+        g.sbRemaining = bonus;
+        g.sbCatched = g.catched;
+    } else {
+        g.state = ROUNDCLEAR;
+        g.clearTimer = CLEAR_TIME;
+    }
+}
+
 void updatePlaying(Game& g, const Input& in, float dt) {
     Player& p = g.p;
     if (g.playerDying) {
@@ -1680,11 +1735,11 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     // Step the Power orb's colour on this action (fixed cycle, not random).
     if (g.orbActive && orbStep) g.orbFamily = (g.orbFamily + 1) % 7;
 
-    // Bomb collection (lowest remaining index is the lit one).
-    int lit = -1;
-    for (int i = 0; i < (int)g.bombs.size(); ++i)
-        if (!g.bombs[i].collected) { lit = i; break; }
-
+    // Bomb collection. The arcade lights bombs in a fixed order: nothing is lit
+    // until the first bomb is grabbed, then catching the lit ("fire") bomb lights
+    // the next in sequence. A fire bomb scores 200 (vs 100) and counts toward the
+    // end-of-level Special Bonus; grabbing an unlit bomb breaks the chain but
+    // leaves the lit one lit. (Mirrors bombjack.lua checkCollisionWithBombs.)
     for (int i = 0; i < (int)g.bombs.size(); ++i) {
         Bomb& b = g.bombs[i];
         if (b.collected) continue;
@@ -1693,16 +1748,18 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             b.collected = true;
             g.bombsLeft--;
             g.explosions.push_back({b.x, b.y, 0.0f});   // quick clear burst
+            const bool wasLit  = (i == g.litBomb);
+            const bool relight = (g.litBomb < 0) || wasLit;  // first grab, or grabbed the lit one
             int gain;
-            if (i == lit) {                       // grabbed the lit one, in sequence
-                g.streak = std::min(g.streak + 1, 5);
-                gain = 100 * g.streak;
+            if (wasLit) {                         // a "fire" bomb -> feeds the Special Bonus
+                g.catched++;
+                gain = 200;
                 g.powerMeter += 1.0f;             // lit bombs charge the P orb faster
             } else {
-                g.streak = 1;
                 gain = 100;
                 g.powerMeter += 0.5f;
             }
+            if (relight) g.litBomb = nextLitBomb(g, i + 1);
             gain *= g.multiplier;
             g.score += gain;
             g.popups.push_back({b.x, b.y - 6, 0.0f, gain});
@@ -1881,9 +1938,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     }
 
     if (g.bombsLeft <= 0) {
-        g.score += 500;            // round-clear bonus
-        g.state = ROUNDCLEAR;
-        g.clearTimer = CLEAR_TIME;
+        finishLevel(g);            // Special Bonus screen, or straight to round-clear
         return;
     }
 
@@ -1926,7 +1981,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         if (frozen) {
             if (touching) {                             // kill the frozen chaser
                 int idx = std::min(g.killCount, (int)(std::size(KILL_POINTS)) - 1);
-                int gain = KILL_POINTS[idx] * g.streak * g.multiplier;
+                int gain = KILL_POINTS[idx] * g.multiplier;
                 g.score += gain;
                 g.popups.push_back({e.x, e.y - 6, 0.0f, gain});
                 g.coinPickups.push_back({e.x, e.y, 0.0f});   // pickup sparkle
@@ -1966,6 +2021,27 @@ void update(Game& g, const Input& in, float dt) {
                 g.level++;
                 startRound(g);
                 g.state = PLAYING;
+            }
+            break;
+        case SPECIALBONUS:
+            // Three phases: hold the box, count the bonus up onto the score
+            // 1000 at a time, hold again, then advance to the next round.
+            g.sbTimer -= dt;
+            if (g.sbState == 0) {                        // begin hold
+                if (g.sbTimer <= 0) { g.sbState = 1; g.sbTimer = SB_SCORE_TIME; }
+            } else if (g.sbState == 1) {                 // count-up
+                while (g.sbState == 1 && g.sbTimer <= 0) {
+                    g.sbRemaining -= 1000;
+                    g.score += 1000;
+                    if (g.sbRemaining <= 0) { g.sbState = 2; g.sbTimer += SB_END_TIME; }
+                    else                    { g.sbTimer += SB_SCORE_TIME; }
+                }
+            } else {                                     // end hold
+                if (g.sbTimer <= 0) {
+                    g.level++;
+                    startRound(g);
+                    g.state = PLAYING;
+                }
             }
             break;
         case GAMEOVER: {
@@ -2292,8 +2368,39 @@ void drawStartIntro(SDL_Renderer* r, const Game& g) {
     }
 }
 
+// The between-level Special Bonus box: "YOU'VE GOTTEN n FIRE BOMBS / SPECIAL
+// BONUS nnnnn PTS". The number cycles colour and the remaining total counts down
+// to zero (the score counts up to match). Drawn in raw screen pixels.
+void drawSpecialBonus(SDL_Renderer* r, const Game& g) {
+    const float w = 178.0f, h = 92.0f;
+    const float x = (SCREEN_W - w) / 2.0f;
+    const float y = HUD_H + (GAME_H - h) / 2.0f;
+    const float cx = x + w / 2.0f;
+    Color hl = colorCycle3(g.time);
+    setCol(r, hl);         fillR(r, x - 2, y - 2, w + 4, h + 4);   // bright frame
+    setCol(r, {0, 0, 28}); fillR(r, x, y, w, h);                  // dark interior
+    char buf[40];
+    drawTextCentered(r, "YOU'VE GOTTEN", cx, y + 14, 1, {255, 230, 60});
+    std::snprintf(buf, sizeof(buf), "%d FIRE BOMBS", g.sbCatched);
+    drawTextCentered(r, buf, cx, y + 30, 1, hl);
+    drawTextCentered(r, "SPECIAL BONUS", cx, y + 54, 1, {255, 255, 255});
+    if (g.sbRemaining > 0) {
+        std::snprintf(buf, sizeof(buf), "%d PTS", g.sbRemaining);
+        drawTextCentered(r, buf, cx, y + 70, 1, hl);
+    }
+}
+
 void render(SDL_Renderer* r, const Game& g) {
     useWorld(r);
+
+    if (g.state == SPECIALBONUS) {
+        useScreen(r);
+        setCol(r, {0, 0, 0});
+        SDL_RenderClear(r);
+        drawSpecialBonus(r, g);
+        drawHud(r, g);
+        return;
+    }
 
     if (g.state == TITLE) {
         // Welcome screen: solid black background with the logo centered in the
@@ -2326,12 +2433,9 @@ void render(SDL_Renderer* r, const Game& g) {
         drawPlatformShaded(r, pl, currentScreen(g));
     }
 
-    // Bombs (lit = lowest remaining index).
-    int lit = -1;
+    // Bombs (the lit one is the bomb whose fuse is currently active, if any).
     for (int i = 0; i < (int)g.bombs.size(); ++i)
-        if (!g.bombs[i].collected) { lit = i; break; }
-    for (int i = 0; i < (int)g.bombs.size(); ++i)
-        if (!g.bombs[i].collected) drawBomb(r, g.bombs[i], i == lit, g.time);
+        if (!g.bombs[i].collected) drawBomb(r, g.bombs[i], i == g.litBomb, g.time);
 
     // Bomb-clear explosions: play the 3 frames quickly, small -> big.
     for (const Explosion& ex : g.explosions) {
@@ -2472,7 +2576,7 @@ int renderTest() {
     initPlatforms(g);
     startGame(g);
     int frames = 0;
-    for (State st : {TITLE, PLAYING, ROUNDCLEAR, GAMEOVER}) {
+    for (State st : {TITLE, PLAYING, ROUNDCLEAR, SPECIALBONUS, GAMEOVER}) {
         g.state = st;
         render(ren, g);
         SDL_RenderPresent(ren);
