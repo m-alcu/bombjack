@@ -97,6 +97,7 @@ constexpr float BORDER_SOLID_Y = 8.0f * (float)LOGH / (float)GAME_H;
 // Bombs are 12x16 in the original 224x224 playfield.
 constexpr float BOMB_HALF_W = 6.0f * (float)LOGW / (float)GAME_W;
 constexpr float BOMB_HALF_H = 8.0f * (float)LOGH / (float)GAME_H;
+constexpr float FLOOR_TOP = 432.0f;       // solid ground at the bottom of the field
 
 constexpr float INVULN_TIME = 2.0f;     // post-hit invulnerability (s)
 constexpr float CLEAR_TIME  = 3.2f;     // round-clear banner duration (s); also paces the victory dance
@@ -987,7 +988,44 @@ int platCornerPull(int j, int h) {
     return std::clamp(std::max(top, bot), 0, PLAT_TAB_EXT);
 }
 
-void drawPlatformShaded(SDL_Renderer* r, const SDL_FRect& pl, int screen) {
+// Where a vertical girder's end meets a horizontal platform. boxH is the
+// horizontal's thickness; outerLeft/outerRight mark the side(s) the horizontal
+// does NOT extend to — those get a 45° miter (a frame-style corner); a side the
+// horizontal extends across is an inner join (the girder butts in flush).
+struct VJoin { bool joined = false; bool outerLeft = false, outerRight = false; float boxH = 0.0f; };
+
+VJoin findVJoin(const std::vector<SDL_FRect>& plats, const SDL_FRect& v, bool atTop) {
+    const float TOL = 1.5f;
+    const float vl = v.x, vr = v.x + v.w;
+    const float vEdge = atTop ? v.y : v.y + v.h;
+    for (const SDL_FRect& h : plats) {
+        if (h.h >= h.w) continue;                  // horizontals only
+        if (h.y >= FLOOR_TOP - 1.0f) continue;     // skip the collision-only floor
+        const float hl = h.x, hr = h.x + h.w, ht = h.y, hb = h.y + h.h;
+        if (hr < vl - TOL || hl > vr + TOL) continue;        // must overlap in x
+        if (vEdge < ht - TOL || vEdge > hb + TOL) continue;  // the end lands in its band
+        VJoin j;
+        j.joined = true;
+        j.boxH = hb - ht;
+        j.outerLeft  = !(hl < vl - TOL);           // horizontal doesn't reach past the left edge
+        j.outerRight = !(hr > vr + TOL);           // ...nor the right edge
+        return j;
+    }
+    return {};
+}
+
+// How far column i extends past the girder end into the horizontal's thickness,
+// tracing the miter diagonal: full on an outer side, tapering to 0 across the width.
+float vMiterLen(const VJoin& j, int i, int w) {
+    if (!j.joined || w <= 1) return 0.0f;
+    float f = 0.0f;
+    if (j.outerLeft)  f = std::max(f, 1.0f - (float)i / (w - 1));
+    if (j.outerRight) f = std::max(f, (float)i / (w - 1));
+    return j.boxH * f;
+}
+
+void drawPlatformShaded(SDL_Renderer* r, const SDL_FRect& pl, int screen,
+                        const std::vector<SDL_FRect>& plats) {
     const auto& pal = borderPaletteForScreen(screen);
     const int x = (int)std::round(pl.x);
     const int y = (int)std::round(pl.y);
@@ -996,16 +1034,22 @@ void drawPlatformShaded(SDL_Renderer* r, const SDL_FRect& pl, int screen) {
     // Vertical girders (taller than wide) shade across their width — bright left
     // -> dark right — to match the playfield frame's vertical bars, rather than
     // along their length. Mirrors the reference platform.lua "V" branch (a column
-    // per colour band). The top/bottom of the outer columns are inset 1px so the
-    // four corners round off like the horizontal case.
+    // per colour band). A free top/bottom rounds off (outer columns inset 1px);
+    // an end that meets a horizontal platform instead mitres into it — the girder
+    // extends diagonally up/down into the horizontal's thickness so the join reads
+    // like a frame corner.
     if (h > w) {
+        const VJoin top = findVJoin(plats, pl, true);
+        const VJoin bot = findVJoin(plats, pl, false);
         for (int i = 0; i < w; ++i) {
             int band = std::min(7, (i * 8) / w);
             setCol(r, pal[band]);
             bool edge = (i == 0 || i == w - 1);
-            float top = (float)y + (edge ? 1.0f : 0.0f);
-            float bot = (float)(y + h) - (edge ? 1.0f : 0.0f);
-            if (bot > top) fillR(r, (float)(x + i), top, 1.0f, bot - top);
+            float t = top.joined ? (float)y - vMiterLen(top, i, w)
+                                 : (float)y + (edge ? 1.0f : 0.0f);
+            float b = bot.joined ? (float)(y + h) + vMiterLen(bot, i, w)
+                                 : (float)(y + h) - (edge ? 1.0f : 0.0f);
+            if (b > t) fillR(r, (float)(x + i), t, 1.0f, b - t);
         }
         return;
     }
@@ -1122,8 +1166,6 @@ void buildBackground(SDL_Renderer* ren) {
 // ---------------------------------------------------------------------------
 // Level / entity setup
 // ---------------------------------------------------------------------------
-constexpr float FLOOR_TOP = 432.0f;       // solid ground at the bottom of the field
-
 // The hand-authored layout for the current round (levels loop after the last).
 const leveldata::Layout& currentLayout(const Game& g) {
     int idx = (g.level - 1) % leveldata::LEVEL_COUNT;
@@ -2502,10 +2544,16 @@ void render(SDL_Renderer* r, const Game& g) {
 
     drawBackground(r, currentScreen(g));
 
-    // Platforms — level-coloured shading with darker bottom edge.
-    for (const SDL_FRect& pl : g.platforms) {
-        if (pl.y >= FLOOR_TOP - 1.0f) continue;  // keep floor as collision-only
-        drawPlatformShaded(r, pl, currentScreen(g));
+    // Platforms — level-coloured shading with darker bottom edge. Horizontals
+    // first, then vertical girders, so a girder's mitred end draws over the
+    // horizontal it joins.
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const SDL_FRect& pl : g.platforms) {
+            if (pl.y >= FLOOR_TOP - 1.0f) continue;     // keep floor as collision-only
+            bool vertical = pl.h > pl.w;
+            if (vertical != (pass == 1)) continue;       // pass 0: horizontals, pass 1: verticals
+            drawPlatformShaded(r, pl, currentScreen(g), g.platforms);
+        }
     }
 
     // Bombs (the lit one is the bomb whose fuse is currently active, if any).
