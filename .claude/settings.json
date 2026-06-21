@@ -92,7 +92,10 @@
       "Bash(echo \"=== rendertest exit $? ===\")",
       "Bash(echo \"EXIT $?\")",
       "Bash(DISPLAY=:1 ./bombjack --platshot 11)",
-      "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/plat.bmp'\\).save\\('/tmp/plat.png'\\); print\\('ok'\\)\")"
+      "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/plat.bmp'\\).save\\('/tmp/plat.png'\\); print\\('ok'\\)\")",
+      "Bash(DISPLAY=:1 ./bombjack --optshot)",
+      "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/opt.bmp'\\).save\\('/tmp/opt.png'\\); print\\('ok'\\)\")",
+      "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/opt.bmp'\\).save\\('/tmp/opt.png'\\)\")"
     ],
     "additionalDirectories": [
       "/tmp",

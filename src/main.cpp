@@ -161,7 +161,7 @@ constexpr float MUMMY_SPAWN_DELAY = 3.6f;   // seconds between mummy spawns
 constexpr float MUMMY_WALK_SPEED  = 70.0f;  // platform walk speed (world px/s)
 constexpr float FLY_SPEED         = 120.0f; // base speed of transformed chasers
 
-enum State { TITLE, PLAYING, ROUNDCLEAR, SPECIALBONUS, GAMEOVER };
+enum State { TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, GAMEOVER };
 enum DeathPhase { DP_NONE, DP_DANCING, DP_FALLING, DP_DEAD, DP_WAIT };
 
 struct Color { Uint8 r, g, b; };
@@ -221,6 +221,10 @@ struct BonusTaken { float x, y, age = 0.0f; };           // flash when a bonus i
 struct Game {
     int   state = TITLE;
     int   score = 0, lives = 3, level = 1, bombsLeft = 0;
+    // Configurable from the title OPTIONS screen; applied on startGame.
+    int   startLevel = 1;              // round a new game begins on (1..LEVEL_COUNT)
+    int   startLives = 3;              // lives a new game begins with (1..9)
+    int   optSel = 0;                  // selected OPTIONS row (0 level, 1 lives)
     // Fire-bomb chain + end-of-level Special Bonus.
     int   litBomb = -1;                // index of the bomb whose fuse is lit (-1 = none)
     int   catched = 0;                 // "fire bombs" caught this level (lit, in sequence)
@@ -1280,10 +1284,22 @@ void startRound(Game& g) {
     g.spawnHoldX = g.spawnHoldY = 0;
 }
 
+// Number of OPTIONS rows and their value bounds.
+constexpr int OPT_COUNT = 2;
+constexpr int OPT_MAX_LIVES = 9;
+
+// Adjust the currently selected OPTIONS value by d (clamped to its range).
+void optionAdjust(Game& g, int d) {
+    if (g.optSel == 0)
+        g.startLevel = std::clamp(g.startLevel + d, 1, leveldata::LEVEL_COUNT);
+    else
+        g.startLives = std::clamp(g.startLives + d, 1, OPT_MAX_LIVES);
+}
+
 void startGame(Game& g) {
     g.score = 0;
-    g.lives = 3;
-    g.level = 1;
+    g.lives = g.startLives;            // from the OPTIONS screen (default 3)
+    g.level = g.startLevel;            // from the OPTIONS screen (default 1)
     g.state = PLAYING;
     g.bCoins = 0;                      // E/S progress is per-game, not per-round
     g.nextEAt = BONUS_E_EVERY;
@@ -2029,6 +2045,8 @@ void update(Game& g, const Input& in, float dt) {
         case TITLE:
             if (in.jumpPressed) startGame(g);
             break;
+        case OPTIONS:
+            break;                 // navigation handled in the event loop
         case PLAYING:
             updatePlaying(g, in, dt);
             break;
@@ -2407,6 +2425,39 @@ void drawSpecialBonus(SDL_Renderer* r, const Game& g) {
     }
 }
 
+// Title OPTIONS screen: pick the starting round and life count before play.
+// Up/Down moves between rows, Left/Right changes the selected value (handled in
+// the event loop); the selected row is brighter and bracketed with < >.
+void drawOptions(SDL_Renderer* r, const Game& g) {
+    useScreen(r);
+    setCol(r, {0, 0, 0});
+    SDL_RenderClear(r);
+    drawTextCentered(r, "GAME OPTIONS", SCREEN_W / 2.0f, HUD_H + 26, 2, {255, 230, 60});
+
+    const char* labels[OPT_COUNT] = {"START LEVEL", "LIVES"};
+    int values[OPT_COUNT] = {g.startLevel, g.startLives};
+    const float rowY0 = HUD_H + 86;
+    for (int i = 0; i < OPT_COUNT; ++i) {
+        bool sel = (g.optSel == i);
+        Color c = sel ? Color{255, 255, 255} : Color{150, 150, 170};
+        float y = rowY0 + i * 22;
+        if (sel) {
+            // Right-pointing triangle cursor (the font has no '<'/'>' glyph).
+            setCol(r, Color{255, 230, 60});
+            for (int k = 0; k < 7; ++k)
+                fillR(r, 14, y + k, (float)(4 - std::abs(k - 3)), 1.0f);
+        }
+        drawText(r, labels[i], 28, y, 1, c);
+        char vbuf[24];
+        std::snprintf(vbuf, sizeof(vbuf), "%d", values[i]);
+        drawText(r, vbuf, 150, y, 1, c);
+    }
+
+    drawTextCentered(r, "ARROWS SELECT / CHANGE", SCREEN_W / 2.0f, HUD_H + 156, 1, {120, 200, 255});
+    drawTextCentered(r, "SPACE START   ESC BACK", SCREEN_W / 2.0f, HUD_H + 170, 1, {120, 200, 255});
+    drawHud(r, g);
+}
+
 void render(SDL_Renderer* r, const Game& g) {
     useWorld(r);
 
@@ -2438,7 +2489,14 @@ void render(SDL_Renderer* r, const Game& g) {
                                                            : Color{120, 120, 120});
         drawTextCentered(r, "ARROWS MOVE   SPACE FLOAT", SCREEN_W / 2.0f,
                          by + BANNER_H + 28, 1, {150, 150, 170});
+        drawTextCentered(r, "PRESS O FOR OPTIONS", SCREEN_W / 2.0f,
+                         by + BANNER_H + 42, 1, {255, 200, 60});
         drawHud(r, g);
+        return;
+    }
+
+    if (g.state == OPTIONS) {
+        drawOptions(r, g);
         return;
     }
 
@@ -2593,7 +2651,7 @@ int renderTest() {
     initPlatforms(g);
     startGame(g);
     int frames = 0;
-    for (State st : {TITLE, PLAYING, ROUNDCLEAR, SPECIALBONUS, GAMEOVER}) {
+    for (State st : {TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, GAMEOVER}) {
         g.state = st;
         render(ren, g);
         SDL_RenderPresent(ren);
@@ -2689,15 +2747,39 @@ int main(int argc, char** argv) {
             if (e.type == SDL_EVENT_QUIT) running = false;
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
                 SDL_Scancode sc = e.key.scancode;
-                if (sc == SDL_SCANCODE_ESCAPE || sc == SDL_SCANCODE_Q)
-                    running = false;
-                bool jump = (sc == SDL_SCANCODE_SPACE || sc == SDL_SCANCODE_UP ||
-                             sc == SDL_SCANCODE_W);
-                if (jump) {
-                    if (g.state == TITLE) startGame(g);
-                    else jumpEdge = true;
+                if (sc == SDL_SCANCODE_Q) running = false;
+                else if (g.state == OPTIONS) {
+                    // Menu navigation: rows with Up/Down, values with Left/Right,
+                    // Space starts the game, Esc returns to the title.
+                    switch (sc) {
+                        case SDL_SCANCODE_ESCAPE:
+                            g.state = TITLE; break;
+                        case SDL_SCANCODE_UP: case SDL_SCANCODE_W:
+                            g.optSel = (g.optSel + OPT_COUNT - 1) % OPT_COUNT; break;
+                        case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S:
+                            g.optSel = (g.optSel + 1) % OPT_COUNT; break;
+                        case SDL_SCANCODE_LEFT: case SDL_SCANCODE_A:
+                            optionAdjust(g, -1); break;
+                        case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_D:
+                            optionAdjust(g, +1); break;
+                        case SDL_SCANCODE_SPACE: case SDL_SCANCODE_RETURN:
+                            startGame(g); break;
+                        default: break;
+                    }
+                } else {
+                    if (sc == SDL_SCANCODE_ESCAPE) running = false;
+                    bool jump = (sc == SDL_SCANCODE_SPACE || sc == SDL_SCANCODE_UP ||
+                                 sc == SDL_SCANCODE_W);
+                    if (jump) {
+                        if (g.state == TITLE) startGame(g);
+                        else jumpEdge = true;
+                    }
+                    if (sc == SDL_SCANCODE_O && g.state == TITLE) {
+                        g.optSel = 0;
+                        g.state = OPTIONS;
+                    }
+                    if (sc == SDL_SCANCODE_R && g.state == GAMEOVER) startGame(g);
                 }
-                if (sc == SDL_SCANCODE_R && g.state == GAMEOVER) startGame(g);
             }
         }
 
