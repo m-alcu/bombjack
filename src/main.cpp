@@ -558,6 +558,30 @@ Color colorCycle3(float t) {
     }
 }
 
+// Decode the shared sprite atlas. Prefers the on-disk PNG so artwork can be
+// edited without regenerating sprites_full_png.h; falls back to the compiled-in
+// copy when the file isn't found (keeps the binary self-contained). The on-disk
+// asset is byte-identical to the embedded array, so all crop coordinates hold.
+static stbi_uc* loadAtlas(int* w, int* h) {
+    int c = 0;
+    // Read the PNG bytes from disk ourselves (stb_image is built with
+    // STBI_NO_STDIO, so it only decodes from memory) and decode them.
+    if (FILE* f = std::fopen("assets/sprites.png", "rb")) {
+        std::fseek(f, 0, SEEK_END);
+        long n = std::ftell(f);
+        std::fseek(f, 0, SEEK_SET);
+        std::vector<unsigned char> buf((n > 0) ? (size_t)n : 0);
+        size_t got = (n > 0) ? std::fread(buf.data(), 1, buf.size(), f) : 0;
+        std::fclose(f);
+        if (got == buf.size() && !buf.empty()) {
+            if (stbi_uc* p = stbi_load_from_memory(buf.data(), (int)buf.size(), w, h, &c, 4))
+                return p;
+        }
+    }
+    // Fall back to the compiled-in copy so the binary stays self-contained.
+    return stbi_load_from_memory(sprites_full_png, (int)sprites_full_png_len, w, h, &c, 4);
+}
+
 void buildSprites(SDL_Renderer* ren) {
     // The transformed chasers (sphere/orb/horn/club/ufo) are cropped from the
     // shared atlas below, alongside everything else. The bomb/bird/mummy SpriteId
@@ -566,9 +590,8 @@ void buildSprites(SDL_Renderer* ren) {
     // Jack's living animation frames are cropped from the shared atlas below.
 
     // Jack death sequence frames (bj_dancing, bj_PLF, bj_dead) from full atlas.
-    int sw = 0, sh = 0, sc = 0;
-    stbi_uc* spx = stbi_load_from_memory(sprites_full_png, (int)sprites_full_png_len,
-                                         &sw, &sh, &sc, 4);
+    int sw = 0, sh = 0;
+    stbi_uc* spx = loadAtlas(&sw, &sh);
     if (spx) {
         SDL_Surface* atlas =
             SDL_CreateSurfaceFrom(sw, sh, SDL_PIXELFORMAT_RGBA32, spx, sw * 4);
@@ -1113,9 +1136,8 @@ void buildBackground(SDL_Renderer* ren) {
 
     // Title logo: cropped from the shared atlas ("logo" at 4,300, 192x80), then
     // recoloured per phase to spin the three ray blues (BombjackLogoColors).
-    int aw = 0, ah = 0, ac = 0;
-    stbi_uc* apx = stbi_load_from_memory(sprites_full_png, (int)sprites_full_png_len,
-                                         &aw, &ah, &ac, 4);
+    int aw = 0, ah = 0;
+    stbi_uc* apx = loadAtlas(&aw, &ah);
     if (!apx) {
         std::fprintf(stderr, "atlas decode failed (banner)\n");
         return;

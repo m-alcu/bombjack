@@ -96,7 +96,14 @@
       "Bash(DISPLAY=:1 ./bombjack --optshot)",
       "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/opt.bmp'\\).save\\('/tmp/opt.png'\\); print\\('ok'\\)\")",
       "Bash(python3 -c \"from PIL import Image; Image.open\\('/tmp/opt.bmp'\\).save\\('/tmp/opt.png'\\)\")",
-      "Bash(DISPLAY=:1 ./bombjack --platshot 6)"
+      "Bash(DISPLAY=:1 ./bombjack --platshot 6)",
+      "Bash(dd of=assets/sprites.png bs=1 count=7 conv=notrunc seek=1 status=none)",
+      "Bash(SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software /home/marti/proy/bombjack/bombjack --rendertest)",
+      "Bash(awk '/levels\\\\[\\\\] *=|levels\\\\[\\\\]=|Level levels/{f=NR} END{}' src/levels_data.h)",
+      "Bash(BJ_LEVEL=3 ./bombjack --selftest 4000)",
+      "Bash(BJ_LEVEL=3 ./bombjack --selftest 6000)",
+      "Bash(BJ_LEVEL=3 BJ_NODEATH=1 ./bombjack --selftest 8000)",
+      "Bash(BJ_LEVEL=3 BJ_NODEATH=1 BJ_BIRDLOG=1 ./bombjack --selftest 4000)"
     ],
     "additionalDirectories": [
       "/tmp",
