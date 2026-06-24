@@ -223,7 +223,7 @@ struct Game {
     int   state = TITLE;
     int   score = 0, lives = 3, level = 1, bombsLeft = 0;
     // Configurable from the title OPTIONS screen; applied on startGame.
-    int   startLevel = 1;              // round a new game begins on (1..LEVEL_COUNT)
+    int   startLevel = 1;               // round a new game begins on (1..LEVEL_COUNT)
     int   startLives = 3;              // lives a new game begins with (1..9)
     int   optSel = 0;                  // selected OPTIONS row (0 level, 1 lives)
     // Fire-bomb chain + end-of-level Special Bonus.
@@ -271,8 +271,7 @@ struct Game {
     float bonusPlatX = 0.0f, bonusPlatW = 0.0f;  // platform the coin patrols
     float bonusAnim = 0.0f;            // spin-animation clock
     float startAnim = 0.0f;            // >0 while the "START!" intro plays
-    bool  birdSpawnPending = false;    // place the bird from the held dir at intro end
-    int   spawnHoldX = 0, spawnHoldY = 0;  // direction latched during the START intro
+
     Player p{};
     std::vector<SDL_FRect> platforms;
     std::vector<Bomb>      bombs;
@@ -1255,32 +1254,6 @@ void restartEnemies(Game& g) {
     g.orbActive = false;
 }
 
-// Arcade spawn-forcing: a direction held before Jack starts moving makes the
-// bird appear on the opposite side / corner. Encodes the speedrun table exactly
-// — horizontal is always mirrored; a pure up/down also mirrors vertically, but a
-// diagonal keeps its vertical (e.g. up+right -> top-left). Applied to the first
-// bird once the START intro ends; no hold leaves the random spawn untouched.
-void placeBirdFromHold(Game& g) {
-    int hx = g.spawnHoldX, hy = g.spawnHoldY;
-    if (hx == 0 && hy == 0) return;
-    Enemy* bird = nullptr;
-    for (Enemy& e : g.enemies) if (e.kind == EK_BIRD) { bird = &e; break; }
-    if (!bird) return;
-
-    const float leftX = BIRD_SPAWN_L, rightX = BIRD_SPAWN_R;
-    const float topY  = BIRD_SPAWN_T, bottomY = BIRD_SPAWN_B;
-    const float midX  = LOGW / 2.0f, midY = (topY + bottomY) / 2.0f;
-    float bx = (hx > 0) ? leftX : (hx < 0) ? rightX : midX;   // horizontal: mirror
-    float by;
-    if (hx == 0) by = (hy < 0) ? bottomY : (hy > 0) ? topY    : midY;  // pure vert: mirror
-    else         by = (hy < 0) ? topY    : (hy > 0) ? bottomY : midY;  // diagonal: keep
-
-    float speed = birdSpeed(g.level);
-    bird->x = bx; bird->y = by;
-    bird->vx = (bx < midX ? 1.0f : -1.0f) * speed;           // head into the field
-    bird->vy = (by < midY ? 1.0f : -1.0f) * speed * 0.5f;
-    bird->tick = 0; bird->dirX = 0; bird->dirY = 0;
-}
 
 void resetPlayer(Game& g, bool invuln) {
     // Jack starts suspended in mid-air at the centre of the play area — right
@@ -1344,8 +1317,6 @@ void startRound(Game& g) {
     g.bonusActive = false;
     g.nextBonusScore = (g.score / BONUS_LIMIT + 1) * BONUS_LIMIT;
     g.startAnim = START_TOTAL;          // play the "START!" intro for this phase
-    g.birdSpawnPending = true;          // hold a direction during it to place the bird
-    g.spawnHoldX = g.spawnHoldY = 0;
 }
 
 // Number of OPTIONS rows and their value bounds.
@@ -1554,7 +1525,7 @@ void blockEnemy(Game& g, Enemy& e, float ox, float oy) {
 // Used by the bird to probe a step before committing to it.
 bool flyerBlocked(const Game& g, float r, float x, float y) {
     const float L = BORDER_SOLID_X + r, R = LOGW - BORDER_SOLID_X - r;
-    const float T = BORDER_SOLID_Y + r, B = FLOOR_TOP - r;
+    const float T = BIRD_SPAWN_T, B = BIRD_SPAWN_B;
     if (x < L || x > R || y < T || y > B) return true;
     for (const SDL_FRect& pl : g.platforms) {
         if (pl.y >= FLOOR_TOP - 1.0f) continue;        // bottom floor is the B edge
@@ -1575,6 +1546,12 @@ void updateBird(Game& g, Enemy& e, float dt, float pcx, float pcy) {
     if (++e.tick >= BIRD_DECIDE_FRAMES || (e.tgtX == 0.0f && e.tgtY == 0.0f)) {
         e.tick = 0;
         e.tgtX = pcx; e.tgtY = pcy;                    // re-acquire Jack
+        // On open screens (only floor platform) the bird can fly freely to the
+        // top/bottom extremes where the background is solid-coloured and the
+        // sprite becomes invisible. Clamp the target to the visible mid-zone.
+        if (g.platforms.size() < 2) {
+            e.tgtY = std::clamp(e.tgtY, BIRD_SPAWN_T * 2.0f, BIRD_SPAWN_B);
+        }
     }
 
     float dx = e.tgtX - e.x, dy = e.tgtY - e.y;
@@ -1749,8 +1726,6 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                     resetPlayer(g, true);
                     restartEnemies(g);
                     g.startAnim = START_TOTAL;
-                    g.birdSpawnPending = true;
-                    g.spawnHoldX = g.spawnHoldY = 0;
                 }
             }
         }
@@ -1759,17 +1734,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     // Hold the simulation while the "START!" intro slides in and settles.
     if (g.startAnim > 0.0f) {
         g.startAnim -= dt;
-        // Latch the last direction held during the intro: it forces where the
-        // bird appears (and naturally carries into Jack's first move on resume).
-        if (in.left || in.right || in.up || in.down) {
-            g.spawnHoldX = (in.right ? 1 : 0) - (in.left ? 1 : 0);
-            g.spawnHoldY = (in.down ? 1 : 0) - (in.up ? 1 : 0);
-        }
         return;
-    }
-    if (g.birdSpawnPending) {            // intro just ended: place the bird from the hold
-        g.birdSpawnPending = false;
-        placeBirdFromHold(g);
     }
     if (p.invuln > 0) p.invuln -= dt;
     const bool oldOnGround = p.onGround;
@@ -2670,9 +2635,6 @@ void render(SDL_Renderer* r, const Game& g) {
     drawHud(r, g);
 }
 
-// ---------------------------------------------------------------------------
-// Headless self-test: run the simulation with scripted input, no window.
-// ---------------------------------------------------------------------------
 int selfTest(int steps) {
     Game g;
     initPlatforms(g);
