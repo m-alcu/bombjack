@@ -82,13 +82,14 @@ constexpr int WIN_W = WIN_H * 3 / 4;                   // 768  -> 3:4
 constexpr float SPRITE_AR = 4.0f / 3.0f;
 
 // Player physics — tuned for the floaty Bomb Jack feel.
-constexpr float MOVE        = 170.0f;   // horizontal speed (px/s)
-constexpr float JUMP_VEL    = -630.0f;  // initial jump velocity (stronger jump)
-constexpr float FLUTTER     = 165.0f;   // upward kick from an in-air tap
-constexpr float FLUTTER_MIN = -200.0f;  // cap on upward speed from fluttering
-constexpr float GRAVITY     = 980.0f;
-constexpr float GLIDE       = 150.0f;   // reduced gravity while holding jump
-constexpr float MAXFALL     = 520.0f;
+constexpr float MOVE           = 170.0f;  // horizontal speed (px/s)
+constexpr float JUMP_VEL       = -630.0f; // initial jump velocity
+constexpr float JUMP_HOLD_GRAV = 500.0f;  // gravity while holding jump + rising (longer hold = higher)
+constexpr float FLUTTER        = 165.0f;  // upward impulse from tapping jump while falling
+constexpr float FLUTTER_MIN    = -200.0f; // cap on upward speed during flutter descent
+constexpr float GRAVITY        = 980.0f;
+constexpr float GLIDE          = 150.0f;  // gravity while holding jump + up rising, or holding while falling
+constexpr float MAXFALL        = 520.0f;
 
 constexpr float PW = 18.0f;             // player size
 constexpr float PH = 24.0f;
@@ -1521,15 +1522,21 @@ void blockEnemy(Game& g, Enemy& e, float ox, float oy) {
 }
 
 // Transformed chasers: each kind flies and bounces off the walls differently.
-// True if a body of radius r centred at (x,y) overlaps the frame or a platform.
-// Used by the bird to probe a step before committing to it.
-bool flyerBlocked(const Game& g, float r, float x, float y) {
+// True if a body of radius r centred at (x,y) overlaps the frame, a platform,
+// or another bird (self is excluded so a bird doesn't block itself).
+bool flyerBlocked(const Game& g, float r, float x, float y,
+                  const Enemy* self = nullptr) {
     const float L = BORDER_SOLID_X + r, R = LOGW - BORDER_SOLID_X - r;
     const float T = BIRD_SPAWN_T, B = BIRD_SPAWN_B;
     if (x < L || x > R || y < T || y > B) return true;
     for (const SDL_FRect& pl : g.platforms) {
         if (pl.y >= FLOOR_TOP - 1.0f) continue;        // bottom floor is the B edge
         if (circleOverlapsRect(x, y, r, pl)) return true;
+    }
+    for (const Enemy& other : g.enemies) {
+        if (&other == self || other.kind != EK_BIRD) continue;
+        float bx = x - other.x, by = y - other.y;
+        if (bx * bx + by * by < (r + other.r) * (r + other.r)) return true;
     }
     return false;
 }
@@ -1561,7 +1568,7 @@ void updateBird(Game& g, Enemy& e, float dt, float pcx, float pcy) {
     const float step = s * dt;
 
     const float nx = e.x + ux * step, ny = e.y + uy * step;
-    if (!flyerBlocked(g, e.r, nx, ny)) {               // direct line is clear
+    if (!flyerBlocked(g, e.r, nx, ny, &e)) {           // direct line is clear
         e.x = nx; e.y = ny;
         e.vx = ux * s; e.vy = uy * s;                  // heading drives the sprite
         return;
@@ -1576,7 +1583,7 @@ void updateBird(Game& g, Enemy& e, float dt, float pcx, float pcy) {
     for (const auto& m : order) {
         if (m[0] == 0 && m[1] == 0) continue;
         const float tx = e.x + m[0] * step, ty = e.y + m[1] * step;
-        if (!flyerBlocked(g, e.r, tx, ty)) {
+        if (!flyerBlocked(g, e.r, tx, ty, &e)) {
             e.x = tx; e.y = ty;
             e.vx = m[0] * s; e.vy = m[1] * s;
             return;
@@ -1751,19 +1758,35 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     if (clampedX != p.x && p.vx != 0.0f) orbStep = true;   // ran into a side wall
     p.x = clampedX;
 
-    // Jump / flutter.
+    // Jump and airborne control (per the manual):
+    //   • press from ground          → jump
+    //   • hold jump while rising     → reduced gravity (longer hold = higher)
+    //   • also hold up while rising  → even gentler gravity (greatest height)
+    //   • tap once while rising      → stop rising immediately
+    //   • tap repeatedly while falling → flutter down slowly
+    //   • hold jump while falling    → gentle glide gravity
     if (in.jumpPressed) {
         if (p.onGround) {
             p.vy = JUMP_VEL;
             p.onGround = false;
+        } else if (p.vy < 0) {
+            p.vy = 0;                           // stop rising
         } else {
-            p.vy -= FLUTTER;
+            p.vy -= FLUTTER;                    // slow the descent
             if (p.vy < FLUTTER_MIN) p.vy = FLUTTER_MIN;
         }
     }
 
-    // Gravity (gentler while gliding down with jump held).
-    float grav = (in.jumpHeld && p.vy > 0) ? GLIDE : GRAVITY;
+    // Gravity: greatly reduced while holding jump + rising so the hold duration
+    // controls how high Jack goes; holding up reduces it further for max height;
+    // holding while falling gives the gentle glide; otherwise full gravity.
+    float grav;
+    if (in.jumpHeld && p.vy < 0)
+        grav = in.up ? GLIDE : JUMP_HOLD_GRAV;
+    else if (in.jumpHeld && p.vy > 0)
+        grav = GLIDE;
+    else
+        grav = GRAVITY;
     p.vy += grav * dt;
     if (p.vy > MAXFALL) p.vy = MAXFALL;
 
