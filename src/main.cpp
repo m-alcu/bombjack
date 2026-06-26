@@ -2823,8 +2823,7 @@ int main(int argc, char** argv) {
                     }
                 } else {
                     if (sc == SDL_SCANCODE_ESCAPE) running = false;
-                    bool jump = (sc == SDL_SCANCODE_SPACE || sc == SDL_SCANCODE_UP ||
-                                 sc == SDL_SCANCODE_W);
+                    bool jump = (sc == SDL_SCANCODE_SPACE);
                     if (jump) {
                         if (g.state == TITLE) startGame(g);
                         else jumpEdge = true;
@@ -2844,8 +2843,7 @@ int main(int argc, char** argv) {
         in.right = ks[SDL_SCANCODE_RIGHT] || ks[SDL_SCANCODE_D];
         in.up = ks[SDL_SCANCODE_UP] || ks[SDL_SCANCODE_W];
         in.down = ks[SDL_SCANCODE_DOWN] || ks[SDL_SCANCODE_S];
-        in.jumpHeld = ks[SDL_SCANCODE_SPACE] || ks[SDL_SCANCODE_UP] ||
-                      ks[SDL_SCANCODE_W];
+        in.jumpHeld = ks[SDL_SCANCODE_SPACE];
 
         Uint64 now = SDL_GetTicks();
         double frame = (now - prev) / 1000.0;
