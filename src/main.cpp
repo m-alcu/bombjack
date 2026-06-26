@@ -558,26 +558,8 @@ Color colorCycle3(float t) {
     }
 }
 
-// Decode the shared sprite atlas. Prefers the on-disk PNG so artwork can be
-// edited without regenerating sprites_full_png.h; falls back to the compiled-in
-// copy when the file isn't found (keeps the binary self-contained). The on-disk
-// asset is byte-identical to the embedded array, so all crop coordinates hold.
 static stbi_uc* loadAtlas(int* w, int* h) {
     int c = 0;
-    // Read the PNG bytes from disk ourselves (stb_image is built with
-    // STBI_NO_STDIO, so it only decodes from memory) and decode them.
-    if (FILE* f = std::fopen("assets/sprites.png", "rb")) {
-        std::fseek(f, 0, SEEK_END);
-        long n = std::ftell(f);
-        std::fseek(f, 0, SEEK_SET);
-        std::vector<unsigned char> buf((n > 0) ? (size_t)n : 0);
-        size_t got = (n > 0) ? std::fread(buf.data(), 1, buf.size(), f) : 0;
-        std::fclose(f);
-        if (got == buf.size() && !buf.empty()) {
-            if (stbi_uc* p = stbi_load_from_memory(buf.data(), (int)buf.size(), w, h, &c, 4))
-                return p;
-        }
-    }
     // Fall back to the compiled-in copy so the binary stays self-contained.
     return stbi_load_from_memory(sprites_full_png, (int)sprites_full_png_len, w, h, &c, 4);
 }
