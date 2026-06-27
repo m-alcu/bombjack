@@ -219,11 +219,12 @@ void drawHud(SDL_Renderer* r, const Game& g) {
             int bPhase = (int)(g.time / 0.1f) % N;
             int sPhase = (bPhase + N / 2) % N;
             Color bc = MULT_PAL[bPhase], sc = MULT_PAL[sPhase];
+            Color borderC = (g.freezeTimer > 0.0f) ? g.freezeColor : bc;
             auto drawMult = [&](int idx, SDL_FRect dst) {
                 SDL_SetTextureColorMod(g_multSymbol[idx], sc.r, sc.g, sc.b);
                 SDL_RenderTexture(r, g_multSymbol[idx], nullptr, &dst);
                 SDL_SetTextureColorMod(g_multSymbol[idx], 255, 255, 255);
-                SDL_SetTextureColorMod(g_multBorder[idx], bc.r, bc.g, bc.b);
+                SDL_SetTextureColorMod(g_multBorder[idx], borderC.r, borderC.g, borderC.b);
                 SDL_RenderTexture(r, g_multBorder[idx], nullptr, &dst);
                 SDL_SetTextureColorMod(g_multBorder[idx], 255, 255, 255);
             };
@@ -231,8 +232,11 @@ void drawHud(SDL_Renderer* r, const Game& g) {
             drawMult(m, {112, 0, 16, 16});
 
             // Side bar bands share the border color cycle.
-            int step = std::clamp((int)(g.powerMeter * BAR_STEPS / POWER_NEEDED), 0, BAR_STEPS);
+            int step = (g.freezeTimer > 0.0f)
+                ? BAR_STEPS
+                : std::clamp((int)(g.powerMeter * BAR_STEPS / POWER_NEEDED), 0, BAR_STEPS);
             if (step > 0 && g_barRight[0].tex && g_barLeft[0].tex) {
+                Color barC = (g.freezeTimer > 0.0f) ? g.freezeColor : bc;
                 struct Group { int start, count; float margin; };
                 static constexpr Group GROUPS[3] = {{0,3,0}, {3,4,8}, {7,4,16}};
                 for (const auto& grp : GROUPS) {
@@ -241,14 +245,14 @@ void drawHud(SDL_Renderer* r, const Game& g) {
                     float bwR = (float)g_barRight[idx].w;
                     float rx  = 128.0f + grp.margin;
                     SDL_FRect rt{rx, 0, bwR, 8}, rb{rx, 8, bwR, 8};
-                    SDL_SetTextureColorMod(g_barRight[idx].tex, bc.r, bc.g, bc.b);
+                    SDL_SetTextureColorMod(g_barRight[idx].tex, barC.r, barC.g, barC.b);
                     SDL_RenderTexture(r, g_barRight[idx].tex, nullptr, &rt);
                     SDL_RenderTexture(r, g_barRight[idx].tex, nullptr, &rb);
                     SDL_SetTextureColorMod(g_barRight[idx].tex, 255, 255, 255);
                     float bwL = (float)g_barLeft[idx].w;
                     float lx  = 96.0f - grp.margin - bwL;
                     SDL_FRect lt{lx, 0, bwL, 8}, lb{lx, 8, bwL, 8};
-                    SDL_SetTextureColorMod(g_barLeft[idx].tex, bc.r, bc.g, bc.b);
+                    SDL_SetTextureColorMod(g_barLeft[idx].tex, barC.r, barC.g, barC.b);
                     SDL_RenderTexture(r, g_barLeft[idx].tex, nullptr, &lt);
                     SDL_RenderTexture(r, g_barLeft[idx].tex, nullptr, &lb);
                     SDL_SetTextureColorMod(g_barLeft[idx].tex, 255, 255, 255);
