@@ -4,7 +4,15 @@ project(bombjack CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-add_executable(bombjack src/main.cpp)
+add_executable(bombjack
+    src/main.cpp
+    src/renderer.cpp
+    src/sprites.cpp
+    src/background.cpp
+    src/enemy.cpp
+    src/game.cpp
+    src/draw.cpp
+)
 
 # Link SDL3. Prefer pkg-config (reliable on Linux); fall back to the SDL3 CMake
 # config package (common on macOS/vcpkg/Windows).
