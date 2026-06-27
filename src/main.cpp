@@ -226,7 +226,8 @@ struct Game {
     // Configurable from the title OPTIONS screen; applied on startGame.
     int   startLevel = 1;               // round a new game begins on (1..LEVEL_COUNT)
     int   startLives = 3;              // lives a new game begins with (1..9)
-    int   optSel = 0;                  // selected OPTIONS row (0 level, 1 lives)
+    int   imgStyle  = 0;               // background set: 0=CLASSIC 1-7=grid sets 8=NO
+    int   optSel = 0;                  // selected OPTIONS row (0 level, 1 lives, 2 images)
     // Fire-bomb chain + end-of-level Special Bonus.
     int   litBomb = -1;                // index of the bomb whose fuse is lit (-1 = none)
     int   catched = 0;                 // "fire bombs" caught this level (lit, in sequence)
@@ -911,8 +912,54 @@ void drawSprite(SDL_Renderer* r, SpriteId id, float x, float y, float w, float h
 // Backgrounds — the embedded 1120x224 strip holds five 224-wide arcade
 // backdrops; rounds cycle through them (round 1 = first, then the next, ...).
 constexpr int BG_W = 224, BG_H = 224;
-SDL_Texture* g_bgTex = nullptr;
+SDL_Texture* g_bgTex  = nullptr;   // classic: 5-wide horizontal strip
 int g_bgCount = 0;
+
+// Extra 4x4 grid background sets (one texture each, 896x896).
+// imgStyle 1..7 index into g_gridTex[0..6]; 0=CLASSIC, 8=NO.
+constexpr int GRID_BG_COUNT = 7;
+SDL_Texture* g_gridTex[GRID_BG_COUNT] = {};
+const char* const GRID_BG_FILES[GRID_BG_COUNT] = {
+    "magnific_places_1.png",
+    "magnific_places_2.png",
+    "magnific_places_3.png",
+    "magnific_places_4.png",
+    "magnific_places_5.png",
+    "space_1.png",
+    "space_2.png",
+};
+
+// Try several candidate paths for a PNG file (handles run-from-build vs run-from-root).
+// Uses SDL_LoadFile to read into memory, then stbi_load_from_memory to decode.
+static stbi_uc* loadPngFile(const char* name, int* w, int* h) {
+    char buf1[512], buf2[512];
+    std::snprintf(buf1, sizeof(buf1), "assets/%s", name);
+    std::snprintf(buf2, sizeof(buf2), "../assets/%s", name);
+    const char* candidates[] = { buf1, buf2 };
+    int comp = 0;
+    for (const char* p : candidates) {
+        size_t sz = 0;
+        void* data = SDL_LoadFile(p, &sz);
+        if (!data) continue;
+        stbi_uc* px = stbi_load_from_memory(
+            static_cast<const stbi_uc*>(data), (int)sz, w, h, &comp, 4);
+        SDL_free(data);
+        if (px) return px;
+    }
+    return nullptr;
+}
+
+static SDL_Texture* loadGridBgTex(SDL_Renderer* ren, const char* fname) {
+    int w = 0, h = 0;
+    stbi_uc* px = loadPngFile(fname, &w, &h);
+    if (!px) { std::fprintf(stderr, "background load failed: %s\n", fname); return nullptr; }
+    SDL_Surface* s = SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, px, w * 4);
+    SDL_Texture* t = SDL_CreateTextureFromSurface(ren, s);
+    SDL_SetTextureScaleMode(t, SDL_SCALEMODE_NEAREST);
+    SDL_DestroySurface(s);
+    stbi_image_free(px);
+    return t;
+}
 
 // Title logo (192x80, black colour-keyed to transparent), shown on the welcome
 // screen. The ray backdrop uses three blues that the arcade cycles to make the
@@ -1116,6 +1163,9 @@ void buildBackground(SDL_Renderer* ren) {
     stbi_image_free(px);
     g_bgCount = w / BG_W;
 
+    for (int i = 0; i < GRID_BG_COUNT; ++i)
+        g_gridTex[i] = loadGridBgTex(ren, GRID_BG_FILES[i]);
+
     // Title logo: cropped from the shared atlas ("logo" at 4,300, 192x80), then
     // recoloured per phase to spin the three ray blues (BombjackLogoColors).
     int aw = 0, ah = 0;
@@ -1303,15 +1353,18 @@ void startRound(Game& g) {
 }
 
 // Number of OPTIONS rows and their value bounds.
-constexpr int OPT_COUNT = 2;
+constexpr int OPT_COUNT = 3;
 constexpr int OPT_MAX_LIVES = 9;
+constexpr int OPT_IMG_STYLES = GRID_BG_COUNT + 2;  // CLASSIC + 7 grids + NO
 
 // Adjust the currently selected OPTIONS value by d (clamped to its range).
 void optionAdjust(Game& g, int d) {
     if (g.optSel == 0)
         g.startLevel = std::clamp(g.startLevel + d, 1, leveldata::LEVEL_COUNT);
-    else
+    else if (g.optSel == 1)
         g.startLives = std::clamp(g.startLives + d, 1, OPT_MAX_LIVES);
+    else
+        g.imgStyle = (g.imgStyle + d + OPT_IMG_STYLES) % OPT_IMG_STYLES;
 }
 
 void startGame(Game& g) {
@@ -2325,15 +2378,29 @@ void drawPowerOrb(SDL_Renderer* r, float x, float y, float t, int family) {
 }
 
 // Draw the backdrop the current level's layout calls for (screen is 0-based).
-void drawBackground(SDL_Renderer* r, int screen) {
+// imgStyle: 0=CLASSIC, 1-7=grid sets (g_gridTex[imgStyle-1]), 8=NO BG.
+void drawBackground(SDL_Renderer* r, int screen, int imgStyle) {
     setCol(r, {18, 16, 38});
     SDL_RenderClear(r);
-    if (g_bgTex && g_bgCount > 0) {
+    SDL_Texture* tex = nullptr;
+    SDL_FRect src{};
+    if (imgStyle == 0 && g_bgTex && g_bgCount > 0) {
         int idx = screen % g_bgCount;
         if (idx < 0) idx += g_bgCount;
-        SDL_FRect src{(float)(idx * BG_W), 0, (float)BG_W, (float)BG_H};
+        src = {(float)(idx * BG_W), 0, (float)BG_W, (float)BG_H};
+        tex = g_bgTex;
+    } else if (imgStyle >= 1 && imgStyle <= GRID_BG_COUNT) {
+        SDL_Texture* gt = g_gridTex[imgStyle - 1];
+        if (gt) {
+            int idx = ((screen % 16) + 16) % 16;
+            src = {(float)((idx % 4) * BG_W), (float)((idx / 4) * BG_H), (float)BG_W, (float)BG_H};
+            tex = gt;
+        }
+    }
+    // imgStyle == GRID_BG_COUNT+1 means NO background — just the cleared solid colour.
+    if (tex) {
         SDL_FRect dst{0, 0, (float)LOGW, (float)LOGH};
-        SDL_RenderTexture(r, g_bgTex, &src, &dst);
+        SDL_RenderTexture(r, tex, &src, &dst);
     }
 }
 
@@ -2468,27 +2535,31 @@ void drawOptions(SDL_Renderer* r, const Game& g) {
     SDL_RenderClear(r);
     drawTextCentered(r, "GAME OPTIONS", SCREEN_W / 2.0f, HUD_H + 26, 2, {255, 230, 60});
 
-    const char* labels[OPT_COUNT] = {"START LEVEL", "LIVES"};
-    int values[OPT_COUNT] = {g.startLevel, g.startLives};
-    const float rowY0 = HUD_H + 86;
+    const char* imgNames[OPT_IMG_STYLES] = {
+        "CLASSIC", "PLACES1", "PLACES2", "PLACES3", "PLACES4",
+        "PLACES5", "SPACE1", "SPACE2", "NO"
+    };
+    const char* labels[OPT_COUNT] = {"START LEVEL", "LIVES", "NEW IMAGES"};
+    const float rowY0 = HUD_H + 80;
     for (int i = 0; i < OPT_COUNT; ++i) {
         bool sel = (g.optSel == i);
         Color c = sel ? Color{255, 255, 255} : Color{150, 150, 170};
         float y = rowY0 + i * 22;
         if (sel) {
-            // Right-pointing triangle cursor (the font has no '<'/'>' glyph).
             setCol(r, Color{255, 230, 60});
             for (int k = 0; k < 7; ++k)
                 fillR(r, 14, y + k, (float)(4 - std::abs(k - 3)), 1.0f);
         }
         drawText(r, labels[i], 28, y, 1, c);
         char vbuf[24];
-        std::snprintf(vbuf, sizeof(vbuf), "%d", values[i]);
+        if (i == 0) std::snprintf(vbuf, sizeof(vbuf), "%d", g.startLevel);
+        else if (i == 1) std::snprintf(vbuf, sizeof(vbuf), "%d", g.startLives);
+        else std::snprintf(vbuf, sizeof(vbuf), "%s", imgNames[g.imgStyle]);
         drawText(r, vbuf, 150, y, 1, c);
     }
 
-    drawTextCentered(r, "ARROWS SELECT / CHANGE", SCREEN_W / 2.0f, HUD_H + 156, 1, {120, 200, 255});
-    drawTextCentered(r, "SPACE START   ESC BACK", SCREEN_W / 2.0f, HUD_H + 170, 1, {120, 200, 255});
+    drawTextCentered(r, "ARROWS SELECT / CHANGE", SCREEN_W / 2.0f, HUD_H + 162, 1, {120, 200, 255});
+    drawTextCentered(r, "SPACE START   ESC BACK", SCREEN_W / 2.0f, HUD_H + 176, 1, {120, 200, 255});
     drawHud(r, g);
 }
 
@@ -2534,7 +2605,7 @@ void render(SDL_Renderer* r, const Game& g) {
         return;
     }
 
-    drawBackground(r, currentScreen(g));
+    drawBackground(r, currentScreen(g), g.imgStyle);
 
     // Platforms — level-coloured shading with darker bottom edge. Horizontals
     // first, then vertical girders, so a girder's mitred end draws over the
@@ -2695,7 +2766,8 @@ int renderTest() {
         ++frames;
     }
 
-    if (g_bgTex) SDL_DestroyTexture(g_bgTex);
+    if (g_bgTex)  SDL_DestroyTexture(g_bgTex);
+    for (SDL_Texture* t : g_gridTex) if (t) SDL_DestroyTexture(t);
     for (Sprite& s : g_sprites)
         if (s.tex) SDL_DestroyTexture(s.tex);
     for (SDL_Texture*& t : g_jackTex)
@@ -2843,7 +2915,8 @@ int main(int argc, char** argv) {
         SDL_RenderPresent(ren);
     }
 
-    if (g_bgTex) SDL_DestroyTexture(g_bgTex);
+    if (g_bgTex)  SDL_DestroyTexture(g_bgTex);
+    for (SDL_Texture* t : g_gridTex) if (t) SDL_DestroyTexture(t);
     for (Sprite& s : g_sprites)
         if (s.tex) SDL_DestroyTexture(s.tex);
     for (SDL_Texture*& t : g_jackTex)
