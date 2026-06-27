@@ -159,11 +159,11 @@ void buildSprites(SDL_Renderer* ren) {
     // Font glyphs (white 7x7, two rows in the atlas).
     buildFont(ren, atlas);
 
-    // Boxed multiplier indicators x / 1..5.
-    static const int multX[6] = {8, 24, 44, 64, 84, 104};
+    // Boxed multiplier indicators x / 1..5 (full 16x16 cells with green border).
+    static const int multX[6] = {4, 24, 44, 64, 84, 104};
     for (int i = 0; i < 6; ++i) {
-        SDL_Surface* f = SDL_CreateSurface(12, 12, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{multX[i], 194, 12, 12};
+        SDL_Surface* f = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
+        SDL_Rect src{multX[i], 192, SIZE_16PX, SIZE_16PX};
         SDL_BlitSurface(atlas, &src, f, nullptr);
         g_multTex[i] = texFromSurface(ren, f);
         SDL_DestroySurface(f);

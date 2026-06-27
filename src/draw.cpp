@@ -211,8 +211,8 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     {
         int m = std::clamp(g.multiplier, 1, 5);
         if (g_multTex[0] && g_multTex[m]) {
-            SDL_FRect xbox{96, 2, 12, 12};  SDL_RenderTexture(r, g_multTex[0], nullptr, &xbox);
-            SDL_FRect dbox{108, 2, 12, 12}; SDL_RenderTexture(r, g_multTex[m], nullptr, &dbox);
+            SDL_FRect xbox{96,  0, 16, 16}; SDL_RenderTexture(r, g_multTex[0], nullptr, &xbox);
+            SDL_FRect dbox{112, 0, 16, 16}; SDL_RenderTexture(r, g_multTex[m], nullptr, &dbox);
         }
     }
     {
