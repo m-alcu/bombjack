@@ -105,23 +105,23 @@ void buildSprites(SDL_Renderer* ren) {
     };
     auto lum = [](const Uint8* p) { return 0.30f*p[0] + 0.59f*p[1] + 0.11f*p[2]; };
     for (int i = 0; i < JF_COUNT; ++i) {
-        SDL_Surface* f = SDL_CreateSurface(JACK_FW, JACK_FH, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{jackRect[i][0], jackRect[i][1], JACK_FW, JACK_FH};
+        SDL_Surface* f = SDL_CreateSurface(SIZE_16PX, JACK_FH, SDL_PIXELFORMAT_RGBA32);
+        SDL_Rect src{jackRect[i][0], jackRect[i][1], SIZE_16PX, JACK_FH};
         SDL_BlitSurface(atlas, &src, f, nullptr);
         g_jackTex[i] = texFromSurface(ren, f);
         // Build 4 white luminance-banded frames for the freeze colour cycle.
         float lo = 1e9f, hi = -1e9f;
         for (int y = 0; y < JACK_FH; ++y)
-            for (int x = 0; x < JACK_FW; ++x) {
+            for (int x = 0; x < SIZE_16PX; ++x) {
                 const Uint8* sp = (const Uint8*)f->pixels + y * f->pitch + x * 4;
                 if (sp[3] > 0) { float L = lum(sp); lo = std::min(lo, L); hi = std::max(hi, L); }
             }
         float span = std::max(1.0f, hi - lo);
         const float bf[4] = {0.45f, 0.65f, 0.83f, 1.0f};
         for (int ph = 0; ph < 4; ++ph) {
-            SDL_Surface* sv = SDL_CreateSurface(JACK_FW, JACK_FH, SDL_PIXELFORMAT_RGBA32);
+            SDL_Surface* sv = SDL_CreateSurface(SIZE_16PX, JACK_FH, SDL_PIXELFORMAT_RGBA32);
             for (int y = 0; y < JACK_FH; ++y)
-                for (int x = 0; x < JACK_FW; ++x) {
+                for (int x = 0; x < SIZE_16PX; ++x) {
                     const Uint8* sp = (const Uint8*)f->pixels + y * f->pitch + x * 4;
                     Uint8* dp = (Uint8*)sv->pixels + y * sv->pitch + x * 4;
                     if (sp[3] == 0) { dp[0]=dp[1]=dp[2]=dp[3]=0; continue; }
@@ -253,9 +253,9 @@ void buildSprites(SDL_Renderer* ren) {
     };
     for (int i = 0; i < BF_COUNT; ++i) {
         const int w = birdRect[i][2], h = birdRect[i][3];
-        SDL_Surface* f = SDL_CreateSurface(BIRD_FW, BIRD_FH, SDL_PIXELFORMAT_RGBA32);
+        SDL_Surface* f = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
         SDL_Rect src{birdRect[i][0], birdRect[i][1], w, h};
-        SDL_Rect dst{(BIRD_FW - w) / 2, (BIRD_FH - h) / 2, w, h};
+        SDL_Rect dst{(SIZE_16PX - w) / 2, (SIZE_16PX - h) / 2, w, h};
         SDL_BlitSurface(atlas, &src, f, &dst);
         g_birdTex[i] = texFromSurface(ren, f);
         g_birdEye[i] = makeEyeMask(ren, f);
@@ -271,9 +271,9 @@ void buildSprites(SDL_Renderer* ren) {
     };
     for (int i = 0; i < MF_COUNT; ++i) {
         const int w = mummyRect[i][2], h = mummyRect[i][3];
-        SDL_Surface* f = SDL_CreateSurface(MUMMY_FW, MUMMY_FH, SDL_PIXELFORMAT_RGBA32);
+        SDL_Surface* f = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
         SDL_Rect src{mummyRect[i][0], mummyRect[i][1], w, h};
-        SDL_Rect dst{(MUMMY_FW - w) / 2, (MUMMY_FH - h) / 2, w, h};
+        SDL_Rect dst{(SIZE_16PX - w) / 2, (SIZE_16PX - h) / 2, w, h};
         SDL_BlitSurface(atlas, &src, f, &dst);
         g_mummyTex[i] = texFromSurface(ren, f);
         g_mummyEye[i] = makeEyeMask(ren, f);

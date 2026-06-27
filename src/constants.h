@@ -86,11 +86,14 @@ constexpr float FLY_SPEED           = 120.0f;
 constexpr float EXPL_FRAME    = 0.06f;
 constexpr float PICKCOIN_FRAME = 0.06f;
 
+// Common sprite cell side (most atlas sprites are 16×16 or 16×N).
+constexpr int SIZE_16PX = 16;
+
 // Font
 constexpr int FONT_W = 7, FONT_H = 7, FONT_ADV = 8;
 
 // Jack sprite sizes and animation
-constexpr int   JACK_FW = 16, JACK_FH = 15;
+constexpr int   JACK_FH = 15;
 constexpr float JACK_WALK_FRAME = 0.125f;
 
 // Round-clear victory dance
@@ -103,7 +106,6 @@ constexpr int VICTORY_SEQ[VICTORY_STEPS] = {
 };
 
 // Bird enemy
-constexpr int   BIRD_FW = 16, BIRD_FH = 16;
 constexpr int   BIRD_DECIDE_FRAMES = 250;
 constexpr float BIRD_FLAP_FRAME = 0.1f;
 constexpr float BIRD_PULSE_STEP = 0.06f;
@@ -113,7 +115,6 @@ constexpr float BIRD_SPAWN_T = 70.0f;
 constexpr float BIRD_SPAWN_B = LOGH - 90.0f;
 
 // Mummy sprite size
-constexpr int MUMMY_FW = 16, MUMMY_FH = 16;
 constexpr float MUMMY_WALK_FRAME = 0.1f;
 
 // Spawn flash cell size
@@ -130,7 +131,7 @@ constexpr int   BANNER_PHASES = 3;
 constexpr float BANNER_ROT = 0.05f;
 
 // HUD life icon
-constexpr int LIVE_W = 16, LIVE_H = 16;
+
 
 // Platform frame tab geometry
 constexpr int PLAT_TAB_EXT   = 3;

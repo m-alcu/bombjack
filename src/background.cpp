@@ -230,12 +230,12 @@ void buildBackground(SDL_Renderer* ren) {
     // Jack life icon for the HUD.
     {
         const int LIX = 1, LIY = 3;
-        std::vector<Uint8> li((size_t)LIVE_W * LIVE_H * 4);
-        for (int y = 0; y < LIVE_H; ++y)
-            std::memcpy(&li[(size_t)y * LIVE_W * 4],
-                        apx + ((size_t)(LIY + y) * aw + LIX) * 4, (size_t)LIVE_W * 4);
-        SDL_Surface* ls = SDL_CreateSurfaceFrom(LIVE_W, LIVE_H, SDL_PIXELFORMAT_RGBA32,
-                                                li.data(), LIVE_W * 4);
+        std::vector<Uint8> li((size_t)SIZE_16PX * SIZE_16PX * 4);
+        for (int y = 0; y < SIZE_16PX; ++y)
+            std::memcpy(&li[(size_t)y * SIZE_16PX * 4],
+                        apx + ((size_t)(LIY + y) * aw + LIX) * 4, (size_t)SIZE_16PX * 4);
+        SDL_Surface* ls = SDL_CreateSurfaceFrom(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32,
+                                                li.data(), SIZE_16PX * 4);
         g_liveTex = SDL_CreateTextureFromSurface(ren, ls);
         SDL_SetTextureScaleMode(g_liveTex, SDL_SCALEMODE_NEAREST);
         SDL_DestroySurface(ls);

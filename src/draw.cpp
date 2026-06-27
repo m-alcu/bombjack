@@ -227,7 +227,7 @@ void drawHud(SDL_Renderer* r, const Game& g) {
 
     int shown = std::clamp(g.lives - 1, 0, 7);
     for (int i = 0; i < shown; ++i) {
-        SDL_FRect dst{2.0f + i * 15.0f, top + 1, (float)LIVE_W * 14 / LIVE_H, 14};
+        SDL_FRect dst{2.0f + i * 15.0f, top + 1, 14.0f, 14};
         if (g_liveTex) SDL_RenderTexture(r, g_liveTex, nullptr, &dst);
     }
 
