@@ -210,16 +210,51 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     drawText(r, buf, sideRight - textWidth(buf, 1), 9, 1, {255, 255, 255});
     {
         int m = std::clamp(g.multiplier, 1, 5);
-        if (g_multTex[0] && g_multTex[m]) {
-            SDL_FRect xbox{96,  0, 16, 16}; SDL_RenderTexture(r, g_multTex[0], nullptr, &xbox);
-            SDL_FRect dbox{112, 0, 16, 16}; SDL_RenderTexture(r, g_multTex[m], nullptr, &dbox);
+        if (g_multBorder[0] && g_multSymbol[0]) {
+            static const Color MULT_PAL[] = {
+                {255, 60, 60}, {255,160,  0}, {255,235,  0}, { 60,255, 60},
+                {  0,220,255}, { 80,100,255}, {220, 60,255}, {255, 60,160},
+            };
+            constexpr int N = 8;
+            int bPhase = (int)(g.time / 0.1f) % N;
+            int sPhase = (bPhase + N / 2) % N;
+            Color bc = MULT_PAL[bPhase], sc = MULT_PAL[sPhase];
+            auto drawMult = [&](int idx, SDL_FRect dst) {
+                SDL_SetTextureColorMod(g_multSymbol[idx], sc.r, sc.g, sc.b);
+                SDL_RenderTexture(r, g_multSymbol[idx], nullptr, &dst);
+                SDL_SetTextureColorMod(g_multSymbol[idx], 255, 255, 255);
+                SDL_SetTextureColorMod(g_multBorder[idx], bc.r, bc.g, bc.b);
+                SDL_RenderTexture(r, g_multBorder[idx], nullptr, &dst);
+                SDL_SetTextureColorMod(g_multBorder[idx], 255, 255, 255);
+            };
+            drawMult(0, {96,  0, 16, 16});
+            drawMult(m, {112, 0, 16, 16});
+
+            // Side bar bands share the border color cycle.
+            int step = std::clamp((int)(g.powerMeter * BAR_STEPS / POWER_NEEDED), 0, BAR_STEPS);
+            if (step > 0 && g_barRight[0].tex && g_barLeft[0].tex) {
+                struct Group { int start, count; float margin; };
+                static constexpr Group GROUPS[3] = {{0,3,0}, {3,4,8}, {7,4,16}};
+                for (const auto& grp : GROUPS) {
+                    if (step <= grp.start) continue;
+                    int idx = std::clamp(step - 1, grp.start, grp.start + grp.count - 1);
+                    float bwR = (float)g_barRight[idx].w;
+                    float rx  = 128.0f + grp.margin;
+                    SDL_FRect rt{rx, 0, bwR, 8}, rb{rx, 8, bwR, 8};
+                    SDL_SetTextureColorMod(g_barRight[idx].tex, bc.r, bc.g, bc.b);
+                    SDL_RenderTexture(r, g_barRight[idx].tex, nullptr, &rt);
+                    SDL_RenderTexture(r, g_barRight[idx].tex, nullptr, &rb);
+                    SDL_SetTextureColorMod(g_barRight[idx].tex, 255, 255, 255);
+                    float bwL = (float)g_barLeft[idx].w;
+                    float lx  = 96.0f - grp.margin - bwL;
+                    SDL_FRect lt{lx, 0, bwL, 8}, lb{lx, 8, bwL, 8};
+                    SDL_SetTextureColorMod(g_barLeft[idx].tex, bc.r, bc.g, bc.b);
+                    SDL_RenderTexture(r, g_barLeft[idx].tex, nullptr, &lt);
+                    SDL_RenderTexture(r, g_barLeft[idx].tex, nullptr, &lb);
+                    SDL_SetTextureColorMod(g_barLeft[idx].tex, 255, 255, 255);
+                }
+            }
         }
-    }
-    {
-        float frac = std::min(g.powerMeter / POWER_NEEDED, 1.0f);
-        const float gx = SCREEN_W - 64;
-        setCol(r, {40, 40, 70});    fillR(r, gx, 5, 60, 6);
-        setCol(r, {120, 200, 255}); fillR(r, gx, 5, 60 * frac, 6);
     }
 
     const float top = HUD_H + GAME_H;

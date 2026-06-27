@@ -24,7 +24,10 @@ Sprite g_bonusFrames[4];
 Sprite g_bonusE[4];
 Sprite g_bonusS[4];
 Sprite g_bonusTaken[6];
-SDL_Texture* g_multTex[6] = {};
+SDL_Texture* g_multBorder[6] = {};
+SDL_Texture* g_multSymbol[6] = {};
+Sprite g_barRight[BAR_STEPS];
+Sprite g_barLeft[BAR_STEPS];
 Sprite g_coinFrames[7];
 Sprite g_bombFrames[7];
 Sprite g_orbCycle[7][4];
@@ -159,14 +162,36 @@ void buildSprites(SDL_Renderer* ren) {
     // Font glyphs (white 7x7, two rows in the atlas).
     buildFont(ren, atlas);
 
-    // Boxed multiplier indicators x / 1..5 (full 16x16 cells with green border).
+    // Boxed multiplier indicators x / 1..5 (full 16x16 cells).
+    // Split into two white-mask layers so border and symbol can be tinted independently.
     static const int multX[6] = {4, 24, 44, 64, 84, 104};
     for (int i = 0; i < 6; ++i) {
-        SDL_Surface* f = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
+        SDL_Surface* full = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
         SDL_Rect src{multX[i], 192, SIZE_16PX, SIZE_16PX};
-        SDL_BlitSurface(atlas, &src, f, nullptr);
-        g_multTex[i] = texFromSurface(ren, f);
-        SDL_DestroySurface(f);
+        SDL_BlitSurface(atlas, &src, full, nullptr);
+
+        SDL_Surface* brd = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
+        SDL_Surface* sym = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
+        for (int y = 0; y < SIZE_16PX; ++y)
+            for (int x = 0; x < SIZE_16PX; ++x) {
+                const Uint8* s = (Uint8*)full->pixels + y * full->pitch + x * 4;
+                Uint8* b = (Uint8*)brd->pixels  + y * brd->pitch  + x * 4;
+                Uint8* m = (Uint8*)sym->pixels   + y * sym->pitch  + x * 4;
+                bool isGreen = s[3] > 0 && s[2] == 0 && s[1] == 255; // (66,255,0)
+                bool isWhite = s[3] > 0 && s[0] == 255 && s[2] == 255;
+                bool isBlack = s[3] > 0 && !(s[0] | s[1] | s[2]);
+                // Border layer: stored at lum=128 to match the innermost bar brightness
+                b[0] = b[1] = b[2] = 200; b[3] = isGreen ? 255 : 0;
+                // Symbol layer: black box + white symbol, border area transparent
+                if (isBlack)       { m[0]=m[1]=m[2]=0;   m[3]=255; }
+                else if (isWhite)  { m[0]=m[1]=m[2]=255; m[3]=255; }
+                else               { m[0]=m[1]=m[2]=m[3]=0; }
+            }
+        g_multBorder[i] = texFromSurface(ren, brd);
+        g_multSymbol[i] = texFromSurface(ren, sym);
+        SDL_DestroySurface(brd);
+        SDL_DestroySurface(sym);
+        SDL_DestroySurface(full);
     }
 
     // GAME OVER sprite baked as white mask.
@@ -376,6 +401,37 @@ void buildSprites(SDL_Renderer* ren) {
         SDL_DestroySurface(f);
     }
 
+    // Power bar segments: normalized to grayscale so SetTextureColorMod matches g_multBorder.
+    // Pixels are (R,255,0) where R encodes brightness (66=dim → 255=bright). Black → transparent.
+    static const int barRX[BAR_STEPS] = {124,136,148,160,168,176,188,200,208,216,228};
+    static const int barRW[BAR_STEPS] = {  8,  8,  8,  4,  4,  8,  8,  4,  4,  8,  8};
+    static const int barLX[BAR_STEPS] = {240,248,260,272,280,288,300,312,320,328,340};
+    static const int barLW[BAR_STEPS] = {  4,  8,  8,  4,  4,  8,  8,  4,  4,  8,  8};
+    for (int i = 0; i < BAR_STEPS; ++i) {
+        for (int side = 0; side < 2; ++side) {
+            int bx = side == 0 ? barRX[i] : barLX[i];
+            int bw = side == 0 ? barRW[i] : barLW[i];
+            SDL_Surface* f = SDL_CreateSurface(bw, 8, SDL_PIXELFORMAT_RGBA32);
+            SDL_Rect src{bx, 200, bw, 8};
+            SDL_BlitSurface(atlas, &src, f, nullptr);
+            for (int y = 0; y < 8; ++y)
+                for (int x = 0; x < bw; ++x) {
+                    Uint8* p = (Uint8*)f->pixels + y * f->pitch + x * 4;
+                    bool black = p[3] > 0 && !(p[0] | p[1] | p[2]);
+                    if (black || p[3] == 0) { p[0]=p[1]=p[2]=p[3]=0; }
+                    else {
+                        // Remap R [66..255] → [128..255] so innermost bar matches border lum=128
+                        Uint8 lum = (Uint8)(200 + (int)(p[0] - 66) * 55 / 189);
+                        p[0]=p[1]=p[2]=lum; p[3]=255;
+                    }
+                }
+            Sprite sp{bw, 8, texFromSurface(ren, f)};
+            SDL_DestroySurface(f);
+            if (side == 0) g_barRight[i] = sp;
+            else           g_barLeft[i]  = sp;
+        }
+    }
+
     SDL_DestroySurface(atlas);
     stbi_image_free(spx);
 }
@@ -405,7 +461,10 @@ void destroySprites() {
     for (Sprite& s : g_bonusE)       ds(s);
     for (Sprite& s : g_bonusS)       ds(s);
     for (Sprite& s : g_bonusTaken)   ds(s);
-    for (SDL_Texture*& t : g_multTex) dt(t);
+    for (SDL_Texture*& t : g_multBorder) dt(t);
+    for (SDL_Texture*& t : g_multSymbol) dt(t);
+    for (Sprite& s : g_barRight) ds(s);
+    for (Sprite& s : g_barLeft)  ds(s);
     for (Sprite& s : g_coinFrames)   ds(s);
     for (Sprite& s : g_bombFrames)   ds(s);
     for (auto& row : g_orbCycle) for (Sprite& s : row) ds(s);
