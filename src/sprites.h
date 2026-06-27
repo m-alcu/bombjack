@@ -86,6 +86,9 @@ unsigned char* loadAtlas(int* w, int* h);
 // Load all sprite textures from the embedded atlas.
 void buildSprites(SDL_Renderer* ren);
 
+// Free all sprite textures (call before SDL_DestroyRenderer).
+void destroySprites();
+
 void drawSprite(SDL_Renderer* r, SpriteId id, float x, float y,
                 float w, float h, bool flip);
 void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,

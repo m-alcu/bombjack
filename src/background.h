@@ -12,6 +12,9 @@ extern SDL_Texture* g_liveTex;
 // Decode and build all background and banner textures.
 void buildBackground(SDL_Renderer* ren);
 
+// Free all background textures (call before SDL_DestroyRenderer).
+void destroyBackground();
+
 // Draw the bevelled 8-layer playfield border in screen pixels.
 void drawPlayfieldBorder(SDL_Renderer* r, int screen);
 

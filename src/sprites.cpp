@@ -394,3 +394,35 @@ void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
                              flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
     SDL_SetTextureColorMod(tex, 255, 255, 255);
 }
+
+void destroySprites() {
+    auto dt = [](SDL_Texture*& t) { if (t) { SDL_DestroyTexture(t); t = nullptr; } };
+    auto ds = [&](Sprite& s)      { dt(s.tex); };
+    auto dv = [&](JackVarFrame& f){ dt(f.tex); };
+
+    for (Sprite& s : g_sprites)      ds(s);
+    for (Sprite& s : g_bonusFrames)  ds(s);
+    for (Sprite& s : g_bonusE)       ds(s);
+    for (Sprite& s : g_bonusS)       ds(s);
+    for (Sprite& s : g_bonusTaken)   ds(s);
+    for (SDL_Texture*& t : g_multTex) dt(t);
+    for (Sprite& s : g_coinFrames)   ds(s);
+    for (Sprite& s : g_bombFrames)   ds(s);
+    for (auto& row : g_orbCycle) for (Sprite& s : row) ds(s);
+    for (Sprite& s : g_explFrames)      ds(s);
+    for (Sprite& s : g_pickCoinFrames)  ds(s);
+    for (Sprite& s : g_startBg)         ds(s);
+    for (Sprite& s : g_startText)       ds(s);
+    for (SDL_Texture*& t : g_jackTex)   dt(t);
+    for (auto& row : g_jackPhase) for (SDL_Texture*& t : row) dt(t);
+    for (JackVarFrame& f : g_jackDance) dv(f);
+    for (JackVarFrame& f : g_jackPlf)   dv(f);
+    for (JackVarFrame& f : g_jackDead)  dv(f);
+    for (JackVarFrame& f : g_jackWin)   dv(f);
+    dt(g_gameOverTex);
+    for (SDL_Texture*& t : g_birdTex)      dt(t);
+    for (SDL_Texture*& t : g_birdEye)      dt(t);
+    for (SDL_Texture*& t : g_mummyTex)     dt(t);
+    for (SDL_Texture*& t : g_mummyEye)     dt(t);
+    for (SDL_Texture*& t : g_initEnemyTex) dt(t);
+}

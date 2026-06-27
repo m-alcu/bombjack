@@ -70,13 +70,8 @@ static int renderTest() {
         ++frames;
     }
 
-    if (g_bgTex) SDL_DestroyTexture(g_bgTex);
-    for (SDL_Texture* t : g_gridTex) if (t) SDL_DestroyTexture(t);
-    for (Sprite& s : g_sprites) if (s.tex) SDL_DestroyTexture(s.tex);
-    for (SDL_Texture*& t : g_jackTex) if (t) SDL_DestroyTexture(t);
-    for (JackVarFrame& f : g_jackDance) if (f.tex) SDL_DestroyTexture(f.tex);
-    for (JackVarFrame& f : g_jackPlf)   if (f.tex) SDL_DestroyTexture(f.tex);
-    for (JackVarFrame& f : g_jackDead)  if (f.tex) SDL_DestroyTexture(f.tex);
+    destroySprites();
+    destroyBackground();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();
@@ -205,13 +200,8 @@ int main(int argc, char** argv) {
         SDL_RenderPresent(ren);
     }
 
-    if (g_bgTex) SDL_DestroyTexture(g_bgTex);
-    for (SDL_Texture* t : g_gridTex) if (t) SDL_DestroyTexture(t);
-    for (Sprite& s : g_sprites) if (s.tex) SDL_DestroyTexture(s.tex);
-    for (SDL_Texture*& t : g_jackTex) if (t) SDL_DestroyTexture(t);
-    for (JackVarFrame& f : g_jackDance) if (f.tex) SDL_DestroyTexture(f.tex);
-    for (JackVarFrame& f : g_jackPlf)   if (f.tex) SDL_DestroyTexture(f.tex);
-    for (JackVarFrame& f : g_jackDead)  if (f.tex) SDL_DestroyTexture(f.tex);
+    destroySprites();
+    destroyBackground();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
     SDL_Quit();

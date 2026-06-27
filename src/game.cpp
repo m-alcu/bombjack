@@ -35,8 +35,8 @@ void spawnBombs(Game& g) {
     for (int i = 0; i < lay.nbombs; ++i)
         g.bombs.push_back({lay.bombs[i].x, lay.bombs[i].y, false});
     g.bombsLeft = (int)g.bombs.size();
-    g.litBomb = -1;
-    g.catched = 0;
+    g.litBomb   = -1;
+    g.catched   = 0;
 }
 
 static Enemy makeBird(Game& g, float ang) {
@@ -62,42 +62,42 @@ void spawnEnemies(Game& g) {
 
 void restartEnemies(Game& g) {
     spawnEnemies(g);
-    g.mummyTimer    = 0.0f;
+    g.mummyTimer     = 0.0f;
     g.mummiesSpawned = 0;
-    g.transformIdx  = 0;
-    g.freezeTimer   = 0.0f;
-    g.killCount     = 0;
-    g.orbActive     = false;
+    g.transformIdx   = 0;
+    g.freezeTimer    = 0.0f;
+    g.killCount      = 0;
+    g.orb.active     = false;
 }
 
 void resetPlayer(Game& g, bool invuln) {
-    g.p.x       = LOGW / 2.0f - PW / 2.0f;
-    g.p.y       = LOGH / 2.0f - PH / 2.0f;
-    g.p.vx      = g.p.vy = 0.0f;
+    g.p.x        = LOGW / 2.0f - PW / 2.0f;
+    g.p.y        = LOGH / 2.0f - PH / 2.0f;
+    g.p.vx       = g.p.vy = 0.0f;
     g.p.onGround = false;
-    g.p.invuln  = invuln ? INVULN_TIME : 0.0f;
+    g.p.invuln   = invuln ? INVULN_TIME : 0.0f;
 }
 
 void spawnBonus(Game& g, int kind) {
-    g.bonusKind = kind;
+    g.bonus.kind = kind;
     std::vector<const SDL_FRect*> eligible;
     for (const SDL_FRect& pl : g.platforms)
         if (pl.y < FLOOR_TOP - 1.0f) eligible.push_back(&pl);
 
     if (!eligible.empty()) {
         const SDL_FRect* pl = eligible[g.rng() % eligible.size()];
-        g.bonusPlatX = pl->x;
-        g.bonusPlatW = pl->w;
-        g.bonusY     = pl->y - BONUS_H * 0.5f - 1.0f;
+        g.bonus.platX = pl->x;
+        g.bonus.platW = pl->w;
+        g.bonus.y     = pl->y - BONUS_H * 0.5f - 1.0f;
     } else {
-        g.bonusPlatX = BORDER_SOLID_X;
-        g.bonusPlatW = LOGW - 2 * BORDER_SOLID_X;
-        g.bonusY     = FLOOR_TOP - BONUS_H * 0.5f - 1.0f;
+        g.bonus.platX = BORDER_SOLID_X;
+        g.bonus.platW = LOGW - 2 * BORDER_SOLID_X;
+        g.bonus.y     = FLOOR_TOP - BONUS_H * 0.5f - 1.0f;
     }
-    g.bonusX   = g.bonusPlatX + g.bonusPlatW * 0.5f;
-    g.bonusVx  = (g.rng() & 1) ? BONUS_SPEED : -BONUS_SPEED;
-    g.bonusAnim = 0.0f;
-    g.bonusActive = true;
+    g.bonus.x      = g.bonus.platX + g.bonus.platW * 0.5f;
+    g.bonus.vx     = (g.rng() & 1) ? BONUS_SPEED : -BONUS_SPEED;
+    g.bonus.anim   = 0.0f;
+    g.bonus.active = true;
 }
 
 void startRound(Game& g) {
@@ -105,15 +105,10 @@ void startRound(Game& g) {
     spawnBombs(g);
     spawnEnemies(g);
     resetPlayer(g, true);
-    g.orbActive      = false;
+    g.orb.active     = false;
     g.freezeTimer    = 0.0f;
     g.killCount      = 0;
-    g.playerDying    = false;
-    g.deathTimer     = 0.0f;
-    g.deathPhase     = DP_NONE;
-    g.deathFrame     = 0;
-    g.deathLoops     = 0;
-    g.deathAnim      = 0.0f;
+    g.death          = {};
     g.mummyTimer     = 0.0f;
     g.mummiesSpawned = 0;
     g.transformIdx   = 0;
@@ -123,7 +118,7 @@ void startRound(Game& g) {
     g.bonusTakens.clear();
     g.phaseStart     = g.score;
     g.multiplier     = 1;
-    g.bonusActive    = false;
+    g.bonus.active   = false;
     g.nextBonusScore = (g.score / BONUS_LIMIT + 1) * BONUS_LIMIT;
     g.startAnim      = START_TOTAL;
 }
@@ -138,12 +133,12 @@ void optionAdjust(Game& g, int d) {
 }
 
 void startGame(Game& g) {
-    g.score    = 0;
-    g.lives    = g.startLives;
-    g.level    = g.startLevel;
-    g.state    = PLAYING;
-    g.bCoins   = 0;
-    g.nextEAt  = BONUS_E_EVERY;
+    g.score     = 0;
+    g.lives     = g.startLives;
+    g.level     = g.startLevel;
+    g.state     = PLAYING;
+    g.bCoins    = 0;
+    g.nextEAt   = BONUS_E_EVERY;
     g.livesLost = 0;
     initPlatforms(g);
     startRound(g);
@@ -171,10 +166,10 @@ void finishLevel(Game& g) {
     int bonus = specialBonusFor(g.catched);
     if (bonus > 0) {
         g.state        = SPECIALBONUS;
-        g.sbState      = 0;
-        g.sbTimer      = SB_BEGIN_TIME;
-        g.sbRemaining  = bonus;
-        g.sbCatched    = g.catched;
+        g.sb.phase     = 0;
+        g.sb.timer     = SB_BEGIN_TIME;
+        g.sb.remaining = bonus;
+        g.sb.catched   = g.catched;
     } else {
         g.state      = ROUNDCLEAR;
         g.clearTimer = CLEAR_TIME;
@@ -185,31 +180,31 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     Player& p = g.p;
 
     // Death sequence: run the sprite phases then decrement a life.
-    if (g.playerDying) {
-        if (g.deathPhase == DP_DANCING) {
-            g.deathAnim += dt;
+    if (g.death.active) {
+        if (g.death.phase == DP_DANCING) {
+            g.death.anim += dt;
             const float step = DEATH_DANCE_TOTAL / 3.0f;
-            while (g.deathAnim >= step) {
-                g.deathAnim -= step;
-                g.deathFrame = (g.deathFrame + 1) % 3;
-                if (g.deathFrame == 0) {
-                    g.deathLoops++;
-                    if (g.deathLoops >= DEATH_DANCE_LOOPS) {
-                        g.deathPhase = DP_FALLING;
-                        g.deathFrame = 0;
-                        g.deathAnim  = 0.0f;
+            while (g.death.anim >= step) {
+                g.death.anim -= step;
+                g.death.frame = (g.death.frame + 1) % 3;
+                if (g.death.frame == 0) {
+                    g.death.loops++;
+                    if (g.death.loops >= DEATH_DANCE_LOOPS) {
+                        g.death.phase = DP_FALLING;
+                        g.death.frame = 0;
+                        g.death.anim  = 0.0f;
                         p.vx = 0.0f;
                         p.vy = 0.0f;
                         break;
                     }
                 }
             }
-        } else if (g.deathPhase == DP_FALLING) {
-            g.deathAnim += dt;
+        } else if (g.death.phase == DP_FALLING) {
+            g.death.anim += dt;
             const float step = DEATH_PLF_TOTAL / 4.0f;
-            while (g.deathAnim >= step) {
-                g.deathAnim -= step;
-                g.deathFrame = (g.deathFrame + 1) % 4;
+            while (g.death.anim >= step) {
+                g.death.anim -= step;
+                g.death.frame = (g.death.frame + 1) % 4;
             }
             p.vy += GRAVITY * dt;
             if (p.vy > MAXFALL) p.vy = MAXFALL;
@@ -218,37 +213,36 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 p.y = FLOOR_TOP - PH;
                 p.vy = 0.0f;
                 p.onGround = true;
-                g.deathPhase = DP_DEAD;
-                g.deathFrame = 0;
-                g.deathAnim  = 0.0f;
+                g.death.phase = DP_DEAD;
+                g.death.frame = 0;
+                g.death.anim  = 0.0f;
             } else {
                 p.onGround = false;
             }
-        } else if (g.deathPhase == DP_DEAD) {
-            g.deathAnim += dt;
+        } else if (g.death.phase == DP_DEAD) {
+            g.death.anim += dt;
             const float step = DEATH_DEAD_TOTAL / 4.0f;
-            while (g.deathAnim >= step) {
-                g.deathAnim -= step;
-                if (g.deathFrame < 3) g.deathFrame++;
+            while (g.death.anim >= step) {
+                g.death.anim -= step;
+                if (g.death.frame < 3) g.death.frame++;
                 else {
-                    g.deathPhase = DP_WAIT;
-                    g.deathTimer = DEATH_WAIT_TIME;
+                    g.death.phase = DP_WAIT;
+                    g.death.timer = DEATH_WAIT_TIME;
                     break;
                 }
             }
-        } else if (g.deathPhase == DP_WAIT) {
-            g.deathTimer -= dt;
-            if (g.deathTimer <= 0.0f) {
-                g.playerDying = false;
-                g.deathPhase  = DP_NONE;
+        } else if (g.death.phase == DP_WAIT) {
+            g.death.timer -= dt;
+            if (g.death.timer <= 0.0f) {
+                g.death = {};
                 g.lives--;
                 g.livesLost++;
                 if (g.lives <= 0) {
-                    g.state   = GAMEOVER;
-                    g.goX     = (p.x + PW / 2) * (float)GAME_W / LOGW;
-                    g.goY     = HUD_H + (p.y + PH / 2) * (float)GAME_H / LOGH;
-                    g.goStage = 0;
-                    g.goTimer = GAMEOVER_HOLD;
+                    g.state    = GAMEOVER;
+                    g.go.x     = (p.x + PW / 2) * (float)GAME_W / LOGW;
+                    g.go.y     = HUD_H + (p.y + PH / 2) * (float)GAME_H / LOGH;
+                    g.go.stage = 0;
+                    g.go.timer = GAMEOVER_HOLD;
                 } else {
                     resetPlayer(g, true);
                     restartEnemies(g);
@@ -329,7 +323,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         }
     }
     if (!oldOnGround && p.onGround) orbStep = true;
-    if (g.orbActive && orbStep) g.orbFamily = (g.orbFamily + 1) % 7;
+    if (g.orb.active && orbStep) g.orb.family = (g.orb.family + 1) % 7;
 
     // Bomb collection.
     for (int i = 0; i < (int)g.bombs.size(); ++i) {
@@ -355,65 +349,65 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             gain *= g.multiplier;
             g.score += gain;
             g.popups.push_back({b.x, b.y - 6, 0.0f, gain});
-            if (!g.orbActive && g.freezeTimer <= 0 && g.powerMeter >= POWER_NEEDED) {
-                g.powerMeter -= POWER_NEEDED;
-                g.orbActive  = true;
-                g.orbX       = LOGW / 2.0f;
-                g.orbY       = LOGH / 2.0f - 16.0f;
-                g.orbVx      = ORB_SPEED * 0.5f;
-                g.orbVy      = ORB_SPEED * 0.8660254f;
-                g.orbFamily  = 0;
+            if (!g.orb.active && g.freezeTimer <= 0 && g.powerMeter >= POWER_NEEDED) {
+                g.powerMeter  -= POWER_NEEDED;
+                g.orb.active   = true;
+                g.orb.x        = LOGW / 2.0f;
+                g.orb.y        = LOGH / 2.0f - 16.0f;
+                g.orb.vx       = ORB_SPEED * 0.5f;
+                g.orb.vy       = ORB_SPEED * 0.8660254f;
+                g.orb.family   = 0;
             }
         }
     }
 
     // Power orb movement: bounces around the play area and off platforms.
-    if (g.orbActive) {
-        float oldOrbX = g.orbX;
-        float oldOrbY = g.orbY;
-        g.orbX += g.orbVx * dt;
-        g.orbY += g.orbVy * dt;
+    if (g.orb.active) {
+        float oldOrbX = g.orb.x;
+        float oldOrbY = g.orb.y;
+        g.orb.x += g.orb.vx * dt;
+        g.orb.y += g.orb.vy * dt;
         const float orbL   = BORDER_SOLID_X + ORB_R;
         const float orbRgt = LOGW - BORDER_SOLID_X - ORB_R;
         const float orbT   = BORDER_SOLID_Y + ORB_R;
-        if (g.orbX < orbL)   { g.orbX = orbL;   g.orbVx =  std::fabs(g.orbVx); }
-        if (g.orbX > orbRgt) { g.orbX = orbRgt; g.orbVx = -std::fabs(g.orbVx); }
-        if (g.orbY < orbT)   { g.orbY = orbT;   g.orbVy =  std::fabs(g.orbVy); }
-        if (g.orbY > FLOOR_TOP - ORB_R) {
-            g.orbY = FLOOR_TOP - ORB_R;
-            g.orbVy = -std::fabs(g.orbVy);
+        if (g.orb.x < orbL)   { g.orb.x = orbL;   g.orb.vx =  std::fabs(g.orb.vx); }
+        if (g.orb.x > orbRgt) { g.orb.x = orbRgt; g.orb.vx = -std::fabs(g.orb.vx); }
+        if (g.orb.y < orbT)   { g.orb.y = orbT;   g.orb.vy =  std::fabs(g.orb.vy); }
+        if (g.orb.y > FLOOR_TOP - ORB_R) {
+            g.orb.y  = FLOOR_TOP - ORB_R;
+            g.orb.vy = -std::fabs(g.orb.vy);
         }
         for (const SDL_FRect& pl : g.platforms) {
             if (pl.y >= FLOOR_TOP - 1.0f) continue;
-            if (!circleOverlapsRect(g.orbX, g.orbY, ORB_R, pl)) continue;
+            if (!circleOverlapsRect(g.orb.x, g.orb.y, ORB_R, pl)) continue;
             const float eps = 0.001f;
-            bool hitTop    = oldOrbY + ORB_R <= pl.y + eps       && g.orbY + ORB_R > pl.y + eps;
-            bool hitBottom = oldOrbY - ORB_R >= pl.y + pl.h - eps && g.orbY - ORB_R < pl.y + pl.h - eps;
+            bool hitTop    = oldOrbY + ORB_R <= pl.y + eps       && g.orb.y + ORB_R > pl.y + eps;
+            bool hitBottom = oldOrbY - ORB_R >= pl.y + pl.h - eps && g.orb.y - ORB_R < pl.y + pl.h - eps;
             if (hitTop) {
-                g.orbY  = pl.y - ORB_R;
-                g.orbVy = -std::fabs(g.orbVy);
+                g.orb.y  = pl.y - ORB_R;
+                g.orb.vy = -std::fabs(g.orb.vy);
             } else if (hitBottom) {
-                g.orbY  = pl.y + pl.h + ORB_R;
-                g.orbVy =  std::fabs(g.orbVy);
+                g.orb.y  = pl.y + pl.h + ORB_R;
+                g.orb.vy =  std::fabs(g.orb.vy);
             } else {
-                bool hitLeft  = oldOrbX + ORB_R <= pl.x + eps        && g.orbX + ORB_R > pl.x + eps;
-                bool hitRight = oldOrbX - ORB_R >= pl.x + pl.w - eps && g.orbX - ORB_R < pl.x + pl.w - eps;
+                bool hitLeft  = oldOrbX + ORB_R <= pl.x + eps        && g.orb.x + ORB_R > pl.x + eps;
+                bool hitRight = oldOrbX - ORB_R >= pl.x + pl.w - eps && g.orb.x - ORB_R < pl.x + pl.w - eps;
                 if (hitLeft) {
-                    g.orbX  = pl.x - ORB_R;
-                    g.orbVx = -std::fabs(g.orbVx);
+                    g.orb.x  = pl.x - ORB_R;
+                    g.orb.vx = -std::fabs(g.orb.vx);
                 } else if (hitRight) {
-                    g.orbX  = pl.x + pl.w + ORB_R;
-                    g.orbVx =  std::fabs(g.orbVx);
-                } else if (std::fabs(g.orbVy) >= std::fabs(g.orbVx) && oldOrbY <= pl.y) {
-                    g.orbY  = pl.y - ORB_R;
-                    g.orbVy = -std::fabs(g.orbVy);
+                    g.orb.x  = pl.x + pl.w + ORB_R;
+                    g.orb.vx =  std::fabs(g.orb.vx);
+                } else if (std::fabs(g.orb.vy) >= std::fabs(g.orb.vx) && oldOrbY <= pl.y) {
+                    g.orb.y  = pl.y - ORB_R;
+                    g.orb.vy = -std::fabs(g.orb.vy);
                 } else {
                     if (oldOrbX <= pl.x) {
-                        g.orbX  = pl.x - ORB_R;
-                        g.orbVx = -std::fabs(g.orbVx);
+                        g.orb.x  = pl.x - ORB_R;
+                        g.orb.vx = -std::fabs(g.orb.vx);
                     } else {
-                        g.orbX  = pl.x + pl.w + ORB_R;
-                        g.orbVx =  std::fabs(g.orbVx);
+                        g.orb.x  = pl.x + pl.w + ORB_R;
+                        g.orb.vx =  std::fabs(g.orb.vx);
                     }
                 }
             }
@@ -422,25 +416,25 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     }
 
     // Power orb pickup: freeze all enemies and make them collectable.
-    if (g.orbActive) {
-        if (g.orbX > p.x - ORB_R && g.orbX < p.x + PW + ORB_R &&
-            g.orbY > p.y - ORB_R && g.orbY < p.y + PH + ORB_R) {
-            g.orbActive   = false;
+    if (g.orb.active) {
+        if (g.orb.x > p.x - ORB_R && g.orb.x < p.x + PW + ORB_R &&
+            g.orb.y > p.y - ORB_R && g.orb.y < p.y + PH + ORB_R) {
+            g.orb.active  = false;
             g.freezeTimer = FREEZE_TIME;
             g.killCount   = 0;
-            int idx = (g.orbFamily % (int)std::size(POWER_POINTS) +
+            int idx = (g.orb.family % (int)std::size(POWER_POINTS) +
                        (int)std::size(POWER_POINTS)) % (int)std::size(POWER_POINTS);
             g.freezeColor = POWER_COLORS[idx];
             int gain = POWER_POINTS[idx] * g.multiplier;
             g.score += gain;
-            g.popups.push_back({g.orbX, g.orbY, 0.0f, gain});
+            g.popups.push_back({g.orb.x, g.orb.y, 0.0f, gain});
         }
     }
 
     // Bonus coin threshold: offer a B/E/S coin every BONUS_LIMIT points.
     if (g.score >= g.nextBonusScore) {
         g.nextBonusScore += BONUS_LIMIT;
-        if (!g.bonusActive && g.freezeTimer <= 0.0f) {
+        if (!g.bonus.active && g.freezeTimer <= 0.0f) {
             int kind = -1;
             if ((int)(g.rng() % 100) < BONUS_S_CHANCE)    kind = BK_S;
             else if (g.bCoins + g.livesLost >= g.nextEAt) kind = BK_E;
@@ -450,23 +444,23 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     }
 
     // Bonus coin patrol and pickup.
-    if (g.bonusActive) {
-        g.bonusAnim += dt;
-        g.bonusX += g.bonusVx * dt;
-        const float lo = g.bonusPlatX + BONUS_W * 0.5f;
-        const float hi = g.bonusPlatX + g.bonusPlatW - BONUS_W * 0.5f;
-        if (g.bonusX < lo) { g.bonusX = lo; g.bonusVx =  std::fabs(g.bonusVx); }
-        if (g.bonusX > hi) { g.bonusX = hi; g.bonusVx = -std::fabs(g.bonusVx); }
+    if (g.bonus.active) {
+        g.bonus.anim += dt;
+        g.bonus.x    += g.bonus.vx * dt;
+        const float lo = g.bonus.platX + BONUS_W * 0.5f;
+        const float hi = g.bonus.platX + g.bonus.platW - BONUS_W * 0.5f;
+        if (g.bonus.x < lo) { g.bonus.x = lo; g.bonus.vx =  std::fabs(g.bonus.vx); }
+        if (g.bonus.x > hi) { g.bonus.x = hi; g.bonus.vx = -std::fabs(g.bonus.vx); }
 
-        if (g.bonusX > p.x - BONUS_W * 0.5f && g.bonusX < p.x + PW + BONUS_W * 0.5f &&
-            g.bonusY > p.y - BONUS_H * 0.5f && g.bonusY < p.y + PH + BONUS_H * 0.5f) {
-            g.bonusActive = false;
-            g.bonusTakens.push_back({g.bonusX, g.bonusY, 0.0f});
-            switch (g.bonusKind) {
+        if (g.bonus.x > p.x - BONUS_W * 0.5f && g.bonus.x < p.x + PW + BONUS_W * 0.5f &&
+            g.bonus.y > p.y - BONUS_H * 0.5f && g.bonus.y < p.y + PH + BONUS_H * 0.5f) {
+            g.bonus.active = false;
+            g.bonusTakens.push_back({g.bonus.x, g.bonus.y, 0.0f});
+            switch (g.bonus.kind) {
                 case BK_B: {
                     int gain = BONUS_POINTS * g.multiplier;
                     g.score += gain;
-                    g.popups.push_back({g.bonusX, g.bonusY - 6, 0.0f, gain});
+                    g.popups.push_back({g.bonus.x, g.bonus.y - 6, 0.0f, gain});
                     g.multiplier = std::min(g.multiplier + 1, MAX_MULT);
                     g.bCoins++;
                     break;
@@ -478,7 +472,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 case BK_S: {
                     int gain = BONUS_S_POINTS * g.multiplier;
                     g.score += gain;
-                    g.popups.push_back({g.bonusX, g.bonusY - 6, 0.0f, gain});
+                    g.popups.push_back({g.bonus.x, g.bonus.y - 6, 0.0f, gain});
                     g.lives++;
                     g.state      = ROUNDCLEAR;
                     g.clearTimer = CLEAR_TIME;
@@ -554,12 +548,12 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 continue;
             }
         } else if (p.invuln <= 0 && touching) {
-            g.playerDying = true;
-            g.deathPhase  = DP_DANCING;
-            g.deathFrame  = 0;
-            g.deathLoops  = 0;
-            g.deathAnim   = 0.0f;
-            g.deathTimer  = 0.0f;
+            g.death.active = true;
+            g.death.phase  = DP_DANCING;
+            g.death.frame  = 0;
+            g.death.loops  = 0;
+            g.death.anim   = 0.0f;
+            g.death.timer  = 0.0f;
             p.invuln   = 0.0f;
             p.onGround = false;
             p.vx       = 0.0f;
@@ -590,18 +584,18 @@ void update(Game& g, const Input& in, float dt) {
             }
             break;
         case SPECIALBONUS:
-            g.sbTimer -= dt;
-            if (g.sbState == 0) {
-                if (g.sbTimer <= 0) { g.sbState = 1; g.sbTimer = SB_SCORE_TIME; }
-            } else if (g.sbState == 1) {
-                while (g.sbState == 1 && g.sbTimer <= 0) {
-                    g.sbRemaining -= 1000;
-                    g.score       += 1000;
-                    if (g.sbRemaining <= 0) { g.sbState = 2; g.sbTimer += SB_END_TIME; }
-                    else                    { g.sbTimer += SB_SCORE_TIME; }
+            g.sb.timer -= dt;
+            if (g.sb.phase == 0) {
+                if (g.sb.timer <= 0) { g.sb.phase = 1; g.sb.timer = SB_SCORE_TIME; }
+            } else if (g.sb.phase == 1) {
+                while (g.sb.phase == 1 && g.sb.timer <= 0) {
+                    g.sb.remaining -= 1000;
+                    g.score        += 1000;
+                    if (g.sb.remaining <= 0) { g.sb.phase = 2; g.sb.timer += SB_END_TIME; }
+                    else                     { g.sb.timer += SB_SCORE_TIME; }
                 }
             } else {
-                if (g.sbTimer <= 0) {
+                if (g.sb.timer <= 0) {
                     g.level++;
                     startRound(g);
                     g.state = PLAYING;
@@ -612,17 +606,17 @@ void update(Game& g, const Input& in, float dt) {
             const float cx   = SCREEN_W / 2.0f;
             const float cy   = SCREEN_H / 2.0f;
             const float move = GAMEOVER_SLIDE * dt;
-            if (g.goStage == 0) {
-                if (g.goY < cy) g.goY = std::min(cy, g.goY + move);
-                else            g.goY = std::max(cy, g.goY - move);
-                if (g.goY == cy) g.goStage = 1;
-            } else if (g.goStage == 1) {
-                if (g.goX < cx) g.goX = std::min(cx, g.goX + move);
-                else            g.goX = std::max(cx, g.goX - move);
-                if (g.goX == cx) g.goStage = 2;
+            if (g.go.stage == 0) {
+                if (g.go.y < cy) g.go.y = std::min(cy, g.go.y + move);
+                else             g.go.y = std::max(cy, g.go.y - move);
+                if (g.go.y == cy) g.go.stage = 1;
+            } else if (g.go.stage == 1) {
+                if (g.go.x < cx) g.go.x = std::min(cx, g.go.x + move);
+                else             g.go.x = std::max(cx, g.go.x - move);
+                if (g.go.x == cx) g.go.stage = 2;
             } else {
-                g.goTimer -= dt;
-                if (g.goTimer <= 0.0f) g.state = TITLE;
+                g.go.timer -= dt;
+                if (g.go.timer <= 0.0f) g.state = TITLE;
             }
             break;
         }

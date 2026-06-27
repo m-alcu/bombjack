@@ -259,3 +259,11 @@ void buildBackground(SDL_Renderer* ren) {
         SDL_DestroySurface(bs);
     }
 }
+
+void destroyBackground() {
+    auto dt = [](SDL_Texture*& t) { if (t) { SDL_DestroyTexture(t); t = nullptr; } };
+    dt(g_bgTex);
+    dt(g_liveTex);
+    for (SDL_Texture*& t : g_gridTex)   dt(t);
+    for (SDL_Texture*& t : g_bannerTex) dt(t);
+}

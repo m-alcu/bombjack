@@ -286,11 +286,11 @@ void drawSpecialBonus(SDL_Renderer* r, const Game& g) {
     setCol(r, {0, 0, 28}); fillR(r, x, y, w, h);
     char buf[40];
     drawTextCentered(r, "YOU'VE GOTTEN", cx, y + 14, 1, {255, 230, 60});
-    std::snprintf(buf, sizeof(buf), "%d FIRE BOMBS", g.sbCatched);
+    std::snprintf(buf, sizeof(buf), "%d FIRE BOMBS", g.sb.catched);
     drawTextCentered(r, buf, cx, y + 30, 1, hl);
     drawTextCentered(r, "SPECIAL BONUS", cx, y + 54, 1, {255, 255, 255});
-    if (g.sbRemaining > 0) {
-        std::snprintf(buf, sizeof(buf), "%d PTS", g.sbRemaining);
+    if (g.sb.remaining > 0) {
+        std::snprintf(buf, sizeof(buf), "%d PTS", g.sb.remaining);
         drawTextCentered(r, buf, cx, y + 70, 1, hl);
     }
 }
@@ -385,7 +385,7 @@ void render(SDL_Renderer* r, const Game& g) {
     for (int i = 0; i < (int)g.bombs.size(); ++i)
         if (!g.bombs[i].collected) drawBomb(r, g.bombs[i], i == g.litBomb, g.time);
 
-    for (const Explosion& ex : g.explosions) {
+    for (const TimedEffect& ex : g.explosions) {
         int fi = std::min(2, (int)(ex.age / EXPL_FRAME));
         const Sprite& f = g_explFrames[fi];
         if (!f.tex) continue;
@@ -394,7 +394,7 @@ void render(SDL_Renderer* r, const Game& g) {
         SDL_RenderTexture(r, f.tex, nullptr, &dst);
     }
 
-    for (const CoinPickup& cp : g.coinPickups) {
+    for (const TimedEffect& cp : g.coinPickups) {
         int fi = std::min(3, (int)(cp.age / PICKCOIN_FRAME));
         const Sprite& f = g_pickCoinFrames[fi];
         if (!f.tex) continue;
@@ -404,19 +404,19 @@ void render(SDL_Renderer* r, const Game& g) {
         drawTexTinted(r, f.tex, dst, false, 255, 215, 0);
     }
 
-    if (g.orbActive) drawPowerOrb(r, g.orbX, g.orbY, g.time, g.orbFamily);
+    if (g.orb.active) drawPowerOrb(r, g.orb.x, g.orb.y, g.time, g.orb.family);
 
-    if (g.bonusActive) {
-        const Sprite* set = g.bonusKind == BK_E ? g_bonusE
-                          : g.bonusKind == BK_S ? g_bonusS : g_bonusFrames;
-        const Sprite& f = set[(int)(g.bonusAnim * 12.0f) % 4];
+    if (g.bonus.active) {
+        const Sprite* set = g.bonus.kind == BK_E ? g_bonusE
+                          : g.bonus.kind == BK_S ? g_bonusS : g_bonusFrames;
+        const Sprite& f = set[(int)(g.bonus.anim * 12.0f) % 4];
         if (f.tex) {
-            SDL_FRect dst{g.bonusX - f.w, g.bonusY - f.h, f.w * 2.0f, f.h * 2.0f};
+            SDL_FRect dst{g.bonus.x - f.w, g.bonus.y - f.h, f.w * 2.0f, f.h * 2.0f};
             SDL_RenderTexture(r, f.tex, nullptr, &dst);
         }
     }
 
-    for (const BonusTaken& bt : g.bonusTakens) {
+    for (const TimedEffect& bt : g.bonusTakens) {
         int fi = std::min(5, (int)(bt.age / BONUSTAKEN_FRAME));
         const Sprite& f = g_bonusTaken[fi];
         if (!f.tex) continue;
@@ -430,7 +430,7 @@ void render(SDL_Renderer* r, const Game& g) {
     if (g.state == ROUNDCLEAR)
         drawJackVictory(r, g.p, g.clearTimer);
     else if (g.state != GAMEOVER)
-        drawPlayer(r, g.p, g.time, g.playerDying, g.deathPhase, g.deathFrame,
+        drawPlayer(r, g.p, g.time, g.death.active, g.death.phase, g.death.frame,
                    frozen, g.freezeColor);
 
     useScreen(r);
@@ -457,7 +457,7 @@ void render(SDL_Renderer* r, const Game& g) {
     drawStartIntro(r, g);
     if (g.state == GAMEOVER && g_gameOverTex) {
         Color c = colorCycle3(g.time);
-        const SDL_FRect dst{g.goX - GAMEOVER_W / 2.0f, g.goY - GAMEOVER_H / 2.0f,
+        const SDL_FRect dst{g.go.x - GAMEOVER_W / 2.0f, g.go.y - GAMEOVER_H / 2.0f,
                             (float)GAMEOVER_W, (float)GAMEOVER_H};
         drawTexTinted(r, g_gameOverTex, dst, false, c.r, c.g, c.b);
     }
