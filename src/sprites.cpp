@@ -14,6 +14,7 @@
 
 #include "sprites_full_png.h"
 #include "sprites.h"
+#include "sprite_atlas.h"
 #include <algorithm>
 #include <cstring>
 #include <vector>
@@ -98,18 +99,11 @@ void buildSprites(SDL_Renderer* ren) {
         SDL_DestroySurface(f);
     };
 
-    // Jack living frames (JF_COUNT frames at 16x15).
-    static const int jackRect[JF_COUNT][2] = {
-        {4, 4},
-        {24, 4}, {44, 4}, {64, 4}, {84, 4},
-        {104, 4}, {124, 4}, {144, 4}, {164, 4},
-        {224, 4}, {264, 4}, {304, 4},
-        {204, 4}, {284, 4}, {324, 4},
-    };
+    // Jack living frames (JF_COUNT frames at 16x15). See atlas::JACK.
     auto lum = [](const Uint8* p) { return 0.30f*p[0] + 0.59f*p[1] + 0.11f*p[2]; };
     for (int i = 0; i < JF_COUNT; ++i) {
         SDL_Surface* f = SDL_CreateSurface(SIZE_16PX, JACK_FH, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{jackRect[i][0], jackRect[i][1], SIZE_16PX, JACK_FH};
+        SDL_Rect src{atlas::JACK[i].x, atlas::JACK[i].y, SIZE_16PX, JACK_FH};
         SDL_BlitSurface(atlas, &src, f, nullptr);
         g_jackTex[i] = texFromSurface(ren, f);
         // Build 4 white luminance-banded frames for the freeze colour cycle.
@@ -138,25 +132,15 @@ void buildSprites(SDL_Renderer* ren) {
         SDL_DestroySurface(f);
     }
 
-    // Death / win variable-size frames.
-    static const int danceRect[3][4] = {
-        {249, 31, 16, 17}, {269, 31, 16, 17}, {64, 34, 15, 14}
+    // Death / win variable-size frames (atlas::JACK_WIN / _DANCE / _PLF / _DEAD).
+    auto cropRect = [&](const AtlasRect& a, JackVarFrame& out) {
+        cropJackVar(a.x, a.y, a.w, a.h, out);
     };
-    static const int plfRect[4][4] = {
-        {44, 32, 15, 15}, {64, 32, 15, 16}, {84, 32, 15, 16}, {124, 32, 15, 15}
-    };
-    static const int deadRect[4][4] = {
-        {145, 27, 16, 18}, {166, 29, 13, 16}, {184, 24, 17, 24}, {205, 27, 23, 21}
-    };
-    static const int winRect[4][2] = {{4, 32}, {24, 32}, {286, 32}, {44, 32}};
-    for (int i = 0; i < 4; ++i)
-        cropJackVar(winRect[i][0], winRect[i][1], 16, 16, g_jackWin[i]);
-    for (int i = 0; i < 3; ++i)
-        cropJackVar(danceRect[i][0], danceRect[i][1], danceRect[i][2], danceRect[i][3],
-                    g_jackDance[i]);
+    for (int i = 0; i < 4; ++i) cropRect(atlas::JACK_WIN[i],  g_jackWin[i]);
+    for (int i = 0; i < 3; ++i) cropRect(atlas::JACK_DANCE[i], g_jackDance[i]);
     for (int i = 0; i < 4; ++i) {
-        cropJackVar(plfRect[i][0], plfRect[i][1], plfRect[i][2], plfRect[i][3], g_jackPlf[i]);
-        cropJackVar(deadRect[i][0], deadRect[i][1], deadRect[i][2], deadRect[i][3], g_jackDead[i]);
+        cropRect(atlas::JACK_PLF[i],  g_jackPlf[i]);
+        cropRect(atlas::JACK_DEAD[i], g_jackDead[i]);
     }
 
     // Font glyphs (white 7x7, two rows in the atlas).
@@ -164,10 +148,10 @@ void buildSprites(SDL_Renderer* ren) {
 
     // Boxed multiplier indicators x / 1..5 (full 16x16 cells).
     // Split into two white-mask layers so border and symbol can be tinted independently.
-    static const int multX[6] = {4, 24, 44, 64, 84, 104};
     for (int i = 0; i < 6; ++i) {
         SDL_Surface* full = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{multX[i], 192, SIZE_16PX, SIZE_16PX};
+        SDL_Rect src{atlas::MULT.x0 + i * atlas::MULT.dx, atlas::MULT.y,
+                     atlas::MULT.w, atlas::MULT.h};
         SDL_BlitSurface(atlas, &src, full, nullptr);
 
         SDL_Surface* brd = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
@@ -197,7 +181,7 @@ void buildSprites(SDL_Renderer* ren) {
     // GAME OVER sprite baked as white mask.
     {
         SDL_Surface* f = SDL_CreateSurface(GAMEOVER_W, GAMEOVER_H, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{2, 155, GAMEOVER_W, GAMEOVER_H};
+        SDL_Rect src{atlas::GAMEOVER.x, atlas::GAMEOVER.y, GAMEOVER_W, GAMEOVER_H};
         SDL_BlitSurface(atlas, &src, f, nullptr);
         for (int y = 0; y < f->h; ++y)
             for (int x = 0; x < f->w; ++x) {
@@ -210,10 +194,11 @@ void buildSprites(SDL_Renderer* ren) {
 
     // Frozen-enemy coin spin (7 frames 14x14).
     for (int i = 0; i < 7; ++i) {
-        SDL_Surface* f = SDL_CreateSurface(14, 14, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{307 + i * 14, 115, 14, 14};
+        SDL_Surface* f = SDL_CreateSurface(atlas::COIN.w, atlas::COIN.h, SDL_PIXELFORMAT_RGBA32);
+        SDL_Rect src{atlas::COIN.x0 + i * atlas::COIN.dx, atlas::COIN.y,
+                     atlas::COIN.w, atlas::COIN.h};
         SDL_BlitSurface(atlas, &src, f, nullptr);
-        g_coinFrames[i] = {14, 14, texFromSurface(ren, f)};
+        g_coinFrames[i] = {atlas::COIN.w, atlas::COIN.h, texFromSurface(ren, f)};
         SDL_DestroySurface(f);
     }
 
@@ -226,88 +211,67 @@ void buildSprites(SDL_Renderer* ren) {
         return sp;
     };
 
+    auto cropR     = [&](const AtlasRect& a)  { return cropSprite(a.x, a.y, a.w, a.h); };
+    auto cropStrip = [&](const AtlasStrip& s, int i) {
+        return cropSprite(s.x0 + i * s.dx, s.y, s.w, s.h);
+    };
+
     // Bonus B / E / S spin (4 frames each).
-    static const int bonusBX[4] = {78, 98, 117, 130};
-    static const int bonusEX[4] = {150, 170, 189, 202};
-    static const int bonusSX[4] = {222, 242, 261, 274};
-    static const int bonusW[4]  = {13, 12, 7, 12};
     for (int i = 0; i < 4; ++i) {
-        g_bonusFrames[i] = cropSprite(bonusBX[i], 114, bonusW[i], 13);
-        g_bonusE[i]      = cropSprite(bonusEX[i], 114, bonusW[i], 13);
-        g_bonusS[i]      = cropSprite(bonusSX[i], 114, bonusW[i], 13);
+        g_bonusFrames[i] = cropR(atlas::BONUS_B[i]);
+        g_bonusE[i]      = cropR(atlas::BONUS_E[i]);
+        g_bonusS[i]      = cropR(atlas::BONUS_S[i]);
     }
 
     // Transformed chasers (2 animation frames each).
-    g_sprites[SP_SPHERE1] = cropSprite(5,   73, 14, 14);
-    g_sprites[SP_SPHERE2] = cropSprite(85,  73, 14, 14);
-    g_sprites[SP_ORB1]    = cropSprite(185, 74, 14, 13);
-    g_sprites[SP_ORB2]    = cropSprite(245, 74, 14, 13);
-    g_sprites[SP_CLUB1]   = cropSprite(305, 92, 15, 16);
-    g_sprites[SP_CLUB2]   = cropSprite(345, 92, 15, 16);
-    g_sprites[SP_UFO1]    = cropSprite(4,   98, 16, 10);
-    g_sprites[SP_UFO2]    = cropSprite(64,  98, 16, 10);
+    g_sprites[SP_SPHERE1] = cropR(atlas::SPHERE1);
+    g_sprites[SP_SPHERE2] = cropR(atlas::SPHERE2);
+    g_sprites[SP_ORB1]    = cropR(atlas::ORB1);
+    g_sprites[SP_ORB2]    = cropR(atlas::ORB2);
+    g_sprites[SP_CLUB1]   = cropR(atlas::CLUB1);
+    g_sprites[SP_CLUB2]   = cropR(atlas::CLUB2);
+    g_sprites[SP_UFO1]    = cropR(atlas::UFO1);
+    g_sprites[SP_UFO2]    = cropR(atlas::UFO2);
 
     // Horn frames centred into a 16x16 cell.
-    auto cropCentered = [&](int x, int y, int w, int h) -> Sprite {
+    auto cropCentered = [&](const AtlasRect& a) -> Sprite {
         SDL_Surface* f = SDL_CreateSurface(16, 16, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{x, y, w, h};
-        SDL_Rect dst{(16 - w) / 2, (16 - h) / 2, w, h};
+        SDL_Rect src{a.x, a.y, a.w, a.h};
+        SDL_Rect dst{(16 - a.w) / 2, (16 - a.h) / 2, a.w, a.h};
         SDL_BlitSurface(atlas, &src, f, &dst);
         Sprite sp{16, 16, texFromSurface(ren, f)};
         SDL_DestroySurface(f);
         return sp;
     };
-    g_sprites[SP_HORN1] = cropCentered(280, 54, 15, 14);
-    g_sprites[SP_HORN2] = cropCentered(318, 52, 11, 16);
+    g_sprites[SP_HORN1] = cropCentered(atlas::HORN1);
+    g_sprites[SP_HORN2] = cropCentered(atlas::HORN2);
 
     // Bonus collect flash (6 frames 32x32).
-    for (int i = 0; i < 6; ++i) g_bonusTaken[i] = cropSprite(266 + i * 33, 327, 32, 32);
+    for (int i = 0; i < 6; ++i) g_bonusTaken[i] = cropStrip(atlas::BONUS_TAKEN, i);
 
     // Bomb frames: 0=resting, 1-6=lit fuse.
-    for (int i = 0; i < 7; ++i) g_bombFrames[i] = cropSprite(46 + i * 20, 136, 12, 16);
+    for (int i = 0; i < 7; ++i) g_bombFrames[i] = cropStrip(atlas::BOMB, i);
 
     // Bomb-clear explosion (3 growing frames).
-    static const int er[3][4] = {{24, 120, 8, 8}, {38, 114, 12, 12}, {56, 112, 16, 16}};
-    for (int i = 0; i < 3; ++i) g_explFrames[i] = cropSprite(er[i][0], er[i][1], er[i][2], er[i][3]);
+    for (int i = 0; i < 3; ++i) g_explFrames[i] = cropR(atlas::EXPL[i]);
 
-    // Bird flap frames (3 headings × 3 frames, centred into 16x16 cells).
-    static const int birdRect[BF_COUNT][4] = {
-        {140, 53, 16, 16}, {160, 54, 16, 13}, {180, 55, 16, 11},
-        {352, 53, 16, 16}, {373, 54, 16, 13}, {393, 54, 16, 11},
-        {201, 53, 15, 15}, {221, 55, 15, 12}, {241, 55, 15, 11},
-    };
-    for (int i = 0; i < BF_COUNT; ++i) {
-        const int w = birdRect[i][2], h = birdRect[i][3];
+    // Bird (BF_COUNT) and mummy (MF_COUNT) frames, centred into 16x16 cells and
+    // given a red-eye overlay mask. Same processing, different atlas tables.
+    auto buildEyed = [&](const AtlasRect& a, SDL_Texture*& body, SDL_Texture*& eye) {
         SDL_Surface* f = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{birdRect[i][0], birdRect[i][1], w, h};
-        SDL_Rect dst{(SIZE_16PX - w) / 2, (SIZE_16PX - h) / 2, w, h};
+        SDL_Rect src{a.x, a.y, a.w, a.h};
+        SDL_Rect dst{(SIZE_16PX - a.w) / 2, (SIZE_16PX - a.h) / 2, a.w, a.h};
         SDL_BlitSurface(atlas, &src, f, &dst);
-        g_birdTex[i] = texFromSurface(ren, f);
-        g_birdEye[i] = makeEyeMask(ren, f);
+        body = texFromSurface(ren, f);
+        eye  = makeEyeMask(ren, f);
         SDL_DestroySurface(f);
-    }
-
-    // Mummy frames (centred into 16x16 cells).
-    static const int mummyRect[MF_COUNT][4] = {
-        {6,  53, 12, 15},
-        {45, 53, 11, 15}, {61, 53, 11, 15}, {76, 53, 13, 15},
-        {92, 53, 11, 15}, {108,53, 11, 15}, {123,53, 13, 15},
-        {25, 53, 14, 16},
     };
-    for (int i = 0; i < MF_COUNT; ++i) {
-        const int w = mummyRect[i][2], h = mummyRect[i][3];
-        SDL_Surface* f = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{mummyRect[i][0], mummyRect[i][1], w, h};
-        SDL_Rect dst{(SIZE_16PX - w) / 2, (SIZE_16PX - h) / 2, w, h};
-        SDL_BlitSurface(atlas, &src, f, &dst);
-        g_mummyTex[i] = texFromSurface(ren, f);
-        g_mummyEye[i] = makeEyeMask(ren, f);
-        SDL_DestroySurface(f);
-    }
+    for (int i = 0; i < BF_COUNT; ++i) buildEyed(atlas::BIRD[i],  g_birdTex[i],  g_birdEye[i]);
+    for (int i = 0; i < MF_COUNT; ++i) buildEyed(atlas::MUMMY[i], g_mummyTex[i], g_mummyEye[i]);
 
     // Power orb: prebake per colour family × 4 cycle phases.
     {
-        const int PX = 292, PY = 116, ow = 12, oh = 12;
+        const int PX = atlas::ORB.x, PY = atlas::ORB.y, ow = atlas::ORB.w, oh = atlas::ORB.h;
         std::vector<Uint8> opx((size_t)ow * oh * 4);
         for (int y = 0; y < oh; ++y)
             std::memcpy(&opx[(size_t)y * ow * 4],
@@ -339,13 +303,10 @@ void buildSprites(SDL_Renderer* ren) {
     }
 
     // Spawn flash (4 frames, white masks).
-    static const int initRect[4][4] = {
-        {40, 158, 18, 29}, {65, 157, 29, 31}, {101, 158, 29, 29}, {138, 159, 28, 28}
-    };
     for (int i = 0; i < 4; ++i) {
-        const int w = initRect[i][2], h = initRect[i][3];
+        const int w = atlas::INIT[i].w, h = atlas::INIT[i].h;
         SDL_Surface* f = SDL_CreateSurface(INIT_FW, INIT_FH, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{initRect[i][0], initRect[i][1], w, h};
+        SDL_Rect src{atlas::INIT[i].x, atlas::INIT[i].y, w, h};
         SDL_Rect dst{(INIT_FW - w) / 2, (INIT_FH - h) / 2, w, h};
         SDL_BlitSurface(atlas, &src, f, &dst);
         for (int y = 0; y < f->h; ++y)
@@ -359,14 +320,14 @@ void buildSprites(SDL_Renderer* ren) {
     }
 
     // "START!" halves: each split into background mask and text layer.
-    auto splitStartHalf = [&](int x0, Sprite& bg, Sprite& text) {
-        const int sw = 56, sh = 12;
+    auto splitStartHalf = [&](const AtlasRect& a, Sprite& bg, Sprite& text) {
+        const int sw = a.w, sh = a.h;
         SDL_Surface* b = SDL_CreateSurface(sw, sh, SDL_PIXELFORMAT_RGBA32);
         SDL_Surface* t = SDL_CreateSurface(sw, sh, SDL_PIXELFORMAT_RGBA32);
         for (int y = 0; y < sh; ++y)
             for (int x = 0; x < sw; ++x) {
                 const Uint8* sp = (const Uint8*)atlas->pixels +
-                                  (260 + y) * atlas->pitch + (x0 + x) * 4;
+                                  (a.y + y) * atlas->pitch + (a.x + x) * 4;
                 Uint8* bp = (Uint8*)b->pixels + y * b->pitch + x * 4;
                 Uint8* tp = (Uint8*)t->pixels + y * t->pitch + x * 4;
                 bool opaque = sp[3] > 0;
@@ -380,17 +341,14 @@ void buildSprites(SDL_Renderer* ren) {
         SDL_DestroySurface(b);
         SDL_DestroySurface(t);
     };
-    splitStartHalf(240, g_startBg[0], g_startText[0]);
-    splitStartHalf(300, g_startBg[1], g_startText[1]);
+    splitStartHalf(atlas::START[0], g_startBg[0], g_startText[0]);
+    splitStartHalf(atlas::START[1], g_startBg[1], g_startText[1]);
 
     // Coin-pickup sparkle (4 frames, white masks for yellow tint).
-    static const int pickRect[4][4] = {
-        {175, 159, 26, 26}, {209, 159, 30, 28}, {244, 159, 32, 29}, {282, 156, 32, 32}
-    };
     for (int i = 0; i < 4; ++i) {
-        const int w = pickRect[i][2], h = pickRect[i][3];
+        const int w = atlas::PICK[i].w, h = atlas::PICK[i].h;
         SDL_Surface* f = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{pickRect[i][0], pickRect[i][1], w, h};
+        SDL_Rect src{atlas::PICK[i].x, atlas::PICK[i].y, w, h};
         SDL_BlitSurface(atlas, &src, f, nullptr);
         for (int y = 0; y < h; ++y)
             for (int x = 0; x < w; ++x) {
@@ -403,16 +361,12 @@ void buildSprites(SDL_Renderer* ren) {
 
     // Power bar segments: normalized to grayscale so SetTextureColorMod matches g_multBorder.
     // Pixels are (R,255,0) where R encodes brightness (66=dim → 255=bright). Black → transparent.
-    static const int barRX[BAR_STEPS] = {124,136,148,160,168,176,188,200,208,216,228};
-    static const int barRW[BAR_STEPS] = {  8,  8,  8,  4,  4,  8,  8,  4,  4,  8,  8};
-    static const int barLX[BAR_STEPS] = {240,248,260,272,280,288,300,312,320,328,340};
-    static const int barLW[BAR_STEPS] = {  4,  8,  8,  4,  4,  8,  8,  4,  4,  8,  8};
     for (int i = 0; i < BAR_STEPS; ++i) {
         for (int side = 0; side < 2; ++side) {
-            int bx = side == 0 ? barRX[i] : barLX[i];
-            int bw = side == 0 ? barRW[i] : barLW[i];
+            const AtlasRect& seg = side == 0 ? atlas::BAR_RIGHT[i] : atlas::BAR_LEFT[i];
+            int bw = seg.w;
             SDL_Surface* f = SDL_CreateSurface(bw, 8, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{bx, 200, bw, 8};
+            SDL_Rect src{seg.x, seg.y, bw, 8};
             SDL_BlitSurface(atlas, &src, f, nullptr);
             for (int y = 0; y < 8; ++y)
                 for (int x = 0; x < bw; ++x) {

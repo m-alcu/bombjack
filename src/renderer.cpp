@@ -1,4 +1,5 @@
 #include "renderer.h"
+#include "sprite_atlas.h"
 #include <cctype>
 #include <cmath>
 #include <cstring>
@@ -17,11 +18,12 @@ void buildFont(SDL_Renderer* ren, SDL_Surface* atlas) {
         g_font[c] = t;
         SDL_DestroySurface(f);
     };
+    using namespace atlas;
     const char* letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    for (int i = 0; letters[i]; ++i) add(letters[i], 5 + 12 * i, 212);
-    for (int i = 0; i < 10; ++i) add('0' + i, 5 + 12 * i, 224);
-    add('\'', 169, 224); add('!', 180, 224); add('.', 190, 224);
-    add('-',  204, 224); add('(', 215, 224); add(')', 224, 224);
+    for (int i = 0; letters[i]; ++i) add(letters[i], FONT_X0 + FONT_DX * i, FONT_LETTER_Y);
+    for (int i = 0; i < 10; ++i) add('0' + i, FONT_X0 + FONT_DX * i, FONT_DIGIT_Y);
+    add('\'', 169, FONT_DIGIT_Y); add('!', 180, FONT_DIGIT_Y); add('.', 190, FONT_DIGIT_Y);
+    add('-',  204, FONT_DIGIT_Y); add('(', 215, FONT_DIGIT_Y); add(')', 224, FONT_DIGIT_Y);
 }
 
 void setCol(SDL_Renderer* r, Color c, Uint8 a) {

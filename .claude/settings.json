@@ -107,7 +107,8 @@
       "Bash(git rm *)",
       "Bash(awk 'NR>=195 && /^void updatePlaying/{f=1} f&&/^}/{print NR\": \"$0; c++; if\\(c==1\\)exit}' src/game.cpp)",
       "Bash(awk -F: '$1>195')",
-      "Bash(./build/bombjack --selftest 600)"
+      "Bash(./build/bombjack --selftest 600)",
+      "Bash(grep -nE \"Rect\\\\[|X\\\\[|static const int|\\\\{[0-9]+, *[0-9]+\" src/sprites.cpp)"
     ],
     "additionalDirectories": [
       "/tmp",
