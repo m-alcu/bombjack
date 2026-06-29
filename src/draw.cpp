@@ -4,6 +4,7 @@
 #include "background.h"
 #include "game.h"
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 
@@ -211,11 +212,27 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     {
         int m = std::clamp(g.multiplier, 1, 5);
         if (g_multBorder[0] && g_multSymbol[0]) {
-            static const Color MULT_PAL[] = {
+            static const Color BASE_PAL[] = {
                 {255, 60, 60}, {255,160,  0}, {255,235,  0}, { 60,255, 60},
                 {  0,220,255}, { 80,100,255}, {220, 60,255}, {255, 60,160},
             };
-            constexpr int N = 8;
+            constexpr int BASE_N = 8;
+            constexpr int N = BASE_N * 2;
+            // Expand the 8 base hues to 16 by inserting the midpoint between each
+            // adjacent pair (wrapping), so the cycle fades instead of jumping.
+            static const std::array<Color, N> MULT_PAL = [] {
+                std::array<Color, N> p{};
+                for (int i = 0; i < BASE_N; ++i) {
+                    const Color& a = BASE_PAL[i];
+                    const Color& b = BASE_PAL[(i + 1) % BASE_N];
+                    p[i * 2]     = a;
+                    p[i * 2 + 1] = { (Uint8)((a.r + b.r) / 2),
+                                     (Uint8)((a.g + b.g) / 2),
+                                     (Uint8)((a.b + b.b) / 2) };
+                }
+                return p;
+            }();
+            // 0.1s per hue → 16-step cycle runs at half the previous speed.
             int bPhase = (int)(g.time / 0.1f) % N;
             int sPhase = (bPhase + N / 2) % N;
             Color bc = MULT_PAL[bPhase], sc = MULT_PAL[sPhase];
@@ -261,7 +278,7 @@ void drawHud(SDL_Renderer* r, const Game& g) {
                                  (Uint8)(g.freezeColor.g * bright),
                                  (Uint8)(g.freezeColor.b * bright) };
                     } else {
-                        barC = MULT_PAL[(bPhase - gi - 1 + N) % N];
+                        barC = MULT_PAL[(bPhase - (gi + 1) + N) % N];
                     }
                     int idx = std::clamp(step - 1, grp.start, grp.start + grp.count - 1);
                     float bwR = (float)g_barRight[idx].w;
