@@ -5,8 +5,12 @@
 
 void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t);
 
-void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
-                int deathPhase, int deathFrame, bool frozen, Color freezeColor);
+// Populate the player's owned AnimSprite (call once, after buildSprites).
+void buildJackSprite(AnimSprite& jack);
+
+void drawPlayer(SDL_Renderer* r, const Player& p, const AnimSprite& jack,
+                float t, bool dying, int deathPhase, int deathFrame,
+                bool frozen, Color freezeColor);
 
 void drawJackVictory(SDL_Renderer* r, const Player& p, float clearTimer);
 

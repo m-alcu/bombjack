@@ -3,8 +3,8 @@
 #include <random>
 #include <vector>
 #include "constants.h"
-
-struct Color { Uint8 r, g, b; };
+#include "color.h"
+#include "animsprite.h"
 
 // Basic colours used for the spawn flash (EP_INIT).
 constexpr Color BASIC_COLORS[] = {
@@ -118,6 +118,7 @@ struct Game {
     GameOverState go;
 
     Player p{};
+    AnimSprite jackSprite;   // owned animated sprite for the living player
     std::vector<SDL_FRect>   platforms;
     std::vector<Bomb>        bombs;
     std::vector<Enemy>       enemies;

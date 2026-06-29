@@ -19,6 +19,11 @@ constexpr int WIN_W = WIN_H * 3 / 4;
 // square on the final 768x1024 window (1.5 vs 2.0 win-px per world unit).
 constexpr float SPRITE_AR = 4.0f / 3.0f;
 
+// On-screen draw size of the living Jack sprite (shared by the simulation, which
+// positions his AnimSprite, and the renderer, which sizes it).
+constexpr float JACK_DRAW_W = 26.0f * SPRITE_AR;
+constexpr float JACK_DRAW_H = 28.0f;
+
 // Player physics
 constexpr float MOVE           = 170.0f;
 constexpr float JUMP_VEL       = -630.0f;

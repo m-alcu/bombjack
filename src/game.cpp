@@ -176,6 +176,23 @@ void finishLevel(Game& g) {
     }
 }
 
+// Drive the player's owned AnimSprite: pick the pose from his current state,
+// position it, and advance its own animation clock by dt. This is the PoC of
+// AnimSprite::update(dt) — the sprite owns its timing rather than reading the
+// global clock the way the enemy sprites do.
+static void driveJack(Game& g, float dt) {
+    const Player& p = g.p;
+    const bool moving = std::fabs(p.vx) > 1.0f;
+    const bool left   = p.face < 0;
+    const char* anim;
+    if (p.onGround)       anim = moving ? (left ? "walk_l" : "walk_r") : "idle";
+    else if (p.vy < 0.0f) anim = moving ? (left ? "fly_l"  : "fly_r")  : "fly";
+    else                  anim = moving ? (left ? "fall_l" : "fall_r") : "fall";
+    g.jackSprite.play(anim);
+    g.jackSprite.setPosition(p.x + PW / 2.0f, p.y + PH - JACK_DRAW_H / 2.0f);
+    g.jackSprite.update(dt);
+}
+
 void updatePlaying(Game& g, const Input& in, float dt) {
     Player& p = g.p;
 
@@ -256,6 +273,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     // Hold simulation during the "START!" intro.
     if (g.startAnim > 0.0f) {
         g.startAnim -= dt;
+        driveJack(g, dt);   // keep his sprite positioned/idle during the hold
         return;
     }
 
@@ -562,6 +580,8 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         }
         ++it;
     }
+
+    driveJack(g, dt);   // animate/position the player's owned sprite
 }
 
 void update(Game& g, const Input& in, float dt) {

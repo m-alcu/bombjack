@@ -61,6 +61,7 @@ static int renderTest() {
 
     Game g;
     initPlatforms(g);
+    buildJackSprite(g.jackSprite);
     startGame(g);
     int frames = 0;
     for (State st : {TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, GAMEOVER}) {
@@ -131,6 +132,7 @@ int main(int argc, char** argv) {
 
     Game g;
     initPlatforms(g);
+    buildJackSprite(g.jackSprite);
 
     bool running  = true;
     bool jumpEdge = false;

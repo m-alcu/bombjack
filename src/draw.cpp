@@ -1,6 +1,7 @@
 #include "draw.h"
 #include "renderer.h"
 #include "sprites.h"
+#include "animsprite.h"
 #include "background.h"
 #include "game.h"
 #include <algorithm>
@@ -19,8 +20,36 @@ void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
     }
 }
 
-void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
-                int deathPhase, int deathFrame, bool frozen, Color freezeColor) {
+// Populate the player's owned AnimSprite with its living poses. Called once at
+// startup (after buildSprites), since the frame textures must already exist.
+// Walking is a 4-frame loop per direction; the other states are single poses.
+void buildJackSprite(AnimSprite& jack) {
+    jack.setSize(JACK_DRAW_W, JACK_DRAW_H);
+    auto single = [](int f) {
+        AnimSprite::Animation a;
+        a.frames.push_back({g_jackTex[f], nullptr, 0.1f});
+        return a;
+    };
+    auto walk = [](int base) {
+        AnimSprite::Animation a;
+        for (int i = 0; i < 4; ++i)
+            a.frames.push_back({g_jackTex[base + i], nullptr, JACK_WALK_FRAME});
+        return a;
+    };
+    jack.addAnimation("idle",   single(JF_IDLE));
+    jack.addAnimation("fly",    single(JF_FLY));
+    jack.addAnimation("fly_l",  single(JF_FLY_L));
+    jack.addAnimation("fly_r",  single(JF_FLY_R));
+    jack.addAnimation("fall",   single(JF_FALL));
+    jack.addAnimation("fall_l", single(JF_FALL_L));
+    jack.addAnimation("fall_r", single(JF_FALL_R));
+    jack.addAnimation("walk_l", walk(JF_WALK_L0));
+    jack.addAnimation("walk_r", walk(JF_WALK_R0));
+}
+
+void drawPlayer(SDL_Renderer* r, const Player& p, const AnimSprite& jack,
+                float t, bool dying, int deathPhase, int deathFrame,
+                bool frozen, Color freezeColor) {
     if (dying) {
         const JackVarFrame* fr = nullptr;
         if (deathPhase == DP_DANCING) fr = &g_jackDance[std::clamp(deathFrame, 0, 2)];
@@ -37,32 +66,31 @@ void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying,
         return;
     }
     if (p.invuln > 0 && std::fmod(t, 0.16f) < 0.08f) return;
-    const bool moving = std::fabs(p.vx) > 1.0f;
-    const bool left   = p.face < 0;
-    int f;
-    if (p.onGround) {
-        if (moving) {
-            int step = (int)(t / JACK_WALK_FRAME) % 4;
-            f = (left ? JF_WALK_L0 : JF_WALK_R0) + step;
-        } else {
-            f = JF_IDLE;
+
+    // Frozen: the colour-cycled phase textures aren't part of the AnimSprite, so
+    // pick the matching pose index and draw the tinted shimmer directly.
+    if (frozen) {
+        const bool moving = std::fabs(p.vx) > 1.0f;
+        const bool left   = p.face < 0;
+        int f;
+        if (p.onGround)        f = moving ? (left ? JF_WALK_L0 : JF_WALK_R0) +
+                                            (int)(t / JACK_WALK_FRAME) % 4 : JF_IDLE;
+        else if (p.vy < 0.0f)  f = moving ? (left ? JF_FLY_L  : JF_FLY_R)  : JF_FLY;
+        else                   f = moving ? (left ? JF_FALL_L : JF_FALL_R) : JF_FALL;
+        if (g_jackPhase[f][0]) {
+            SDL_FRect dst{p.x + PW / 2 - JACK_DRAW_W / 2, p.y + PH - JACK_DRAW_H,
+                          JACK_DRAW_W, JACK_DRAW_H};
+            int ph = (int)(t / 0.1f) & 3;
+            SDL_Texture* tex = g_jackPhase[f][ph];
+            SDL_SetTextureColorMod(tex, freezeColor.r, freezeColor.g, freezeColor.b);
+            SDL_RenderTexture(r, tex, nullptr, &dst);
+            SDL_SetTextureColorMod(tex, 255, 255, 255);
+            return;
         }
-    } else if (p.vy < 0.0f) {
-        f = moving ? (left ? JF_FLY_L : JF_FLY_R) : JF_FLY;
-    } else {
-        f = moving ? (left ? JF_FALL_L : JF_FALL_R) : JF_FALL;
     }
-    const float dw = 26.0f * SPRITE_AR, dh = 28.0f;
-    SDL_FRect dst{p.x + PW / 2 - dw / 2, p.y + PH - dh, dw, dh};
-    if (frozen && g_jackPhase[f][0]) {
-        int ph = (int)(t / 0.1f) & 3;
-        SDL_Texture* tex = g_jackPhase[f][ph];
-        SDL_SetTextureColorMod(tex, freezeColor.r, freezeColor.g, freezeColor.b);
-        SDL_RenderTexture(r, tex, nullptr, &dst);
-        SDL_SetTextureColorMod(tex, 255, 255, 255);
-    } else if (g_jackTex[f]) {
-        SDL_RenderTexture(r, g_jackTex[f], nullptr, &dst);
-    }
+    // Normal living Jack: pose, position and animation clock were set on the
+    // owned AnimSprite during the simulation step (see driveJack in game.cpp).
+    jack.draw(r);
 }
 
 void drawJackVictory(SDL_Renderer* r, const Player& p, float clearTimer) {
@@ -94,39 +122,80 @@ static SpriteId enemySprite(const Enemy& e, float t, float& w, float& h) {
     }
 }
 
+// Proof-of-concept: the bird is driven through the generic AnimSprite wrapper
+// rather than hand-rolled frame indexing. It owns three directional flap
+// animations (left / right / vertical), each frame layering the body texture
+// with the eye overlay; movement and the eye-pulse tint are set per draw.
+static AnimSprite& birdSprite() {
+    static AnimSprite s = [] {
+        AnimSprite a;
+        a.setSize(26.0f * SPRITE_AR, 24.0f);
+        auto makeAnim = [](int base) {
+            AnimSprite::Animation anim;
+            for (int i = 0; i < 3; ++i)
+                anim.frames.push_back({g_birdTex[base + i], g_birdEye[base + i],
+                                       BIRD_FLAP_FRAME});
+            return anim;
+        };
+        a.addAnimation("left",  makeAnim(BF_LEFT0));
+        a.addAnimation("right", makeAnim(BF_RIGHT0));
+        a.addAnimation("vert",  makeAnim(BF_VERT0));
+        return a;
+    }();
+    return s;
+}
+
 static void drawBird(SDL_Renderer* r, const Enemy& e, float t) {
-    int step = (int)(t / BIRD_FLAP_FRAME) % 3;
-    int base;
+    AnimSprite& bird = birdSprite();
     if (std::fabs(e.vx) >= std::fabs(e.vy))
-        base = (e.vx < 0) ? BF_LEFT0 : BF_RIGHT0;
+        bird.play(e.vx < 0 ? "left" : "right");
     else
-        base = BF_VERT0;
-    SDL_Texture* body = g_birdTex[base + step];
-    SDL_Texture* eye  = g_birdEye[base + step];
-    if (!body) return;
-    const float w = 26.0f * SPRITE_AR, h = 24.0f;
-    SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
-    drawTexTinted(r, body, dst, false, 255, 255, 255);
-    if (eye) drawTexTinted(r, eye, dst, false, eyePulse(t), 0, 0);
+        bird.play("vert");
+    bird.setClock(t);                 // flap off the shared game clock
+    bird.setPosition(e.x, e.y);
+    bird.setOverlayTint({eyePulse(t), 0, 0});
+    bird.draw(r);
+}
+
+// Same AnimSprite wrapper as the bird: idle / fall single-frame poses plus the
+// two 3-frame directional walks, each layering the body with its eye overlay.
+static AnimSprite& mummySprite() {
+    static AnimSprite s = [] {
+        AnimSprite a;
+        a.setSize(26.0f * SPRITE_AR, 28.0f);
+        auto single = [](int f) {
+            AnimSprite::Animation anim;
+            anim.frames.push_back({g_mummyTex[f], g_mummyEye[f], 0.1f});
+            return anim;
+        };
+        auto walk = [](int base) {
+            AnimSprite::Animation anim;
+            for (int i = 0; i < 3; ++i)
+                anim.frames.push_back({g_mummyTex[base + i], g_mummyEye[base + i],
+                                       MUMMY_WALK_FRAME});
+            return anim;
+        };
+        a.addAnimation("idle",   single(MF_IDLE));
+        a.addAnimation("fall",   single(MF_FALL));
+        a.addAnimation("walk_l", walk(MF_WALK_L0));
+        a.addAnimation("walk_r", walk(MF_WALK_R0));
+        return a;
+    }();
+    return s;
 }
 
 static void drawMummy(SDL_Renderer* r, const Enemy& e, float t) {
-    int frame;
-    if (e.phase == EP_FALL) {
-        frame = MF_FALL;
-    } else if (e.phase == EP_WALK && std::fabs(e.vx) > 1.0f) {
-        int step = (int)(t / MUMMY_WALK_FRAME) % 3;
-        frame = (e.vx < 0 ? MF_WALK_L0 : MF_WALK_R0) + step;
-    } else {
-        frame = MF_IDLE;
-    }
-    SDL_Texture* body = g_mummyTex[frame];
-    SDL_Texture* eye  = g_mummyEye[frame];
-    if (!body) return;
-    const float w = 26.0f * SPRITE_AR, h = 28.0f;
-    SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
-    drawTexTinted(r, body, dst, false, 255, 255, 255);
-    if (eye) drawTexTinted(r, eye, dst, false, eyePulse(t), 0, 0);
+    AnimSprite& mummy = mummySprite();
+    if (e.phase == EP_FALL)
+        mummy.play("fall");
+    else if (e.phase == EP_WALK && std::fabs(e.vx) > 1.0f)
+        mummy.play(e.vx < 0 ? "walk_l" : "walk_r");
+    else
+        mummy.play("idle");
+    mummy.setClock(t);
+    mummy.setPosition(e.x, e.y);
+    mummy.setOverlayTint({eyePulse(t), 0, 0});
+    mummy.draw(r);
 }
 
 static void drawInitEnemy(SDL_Renderer* r, const Enemy& e) {
@@ -508,8 +577,8 @@ void render(SDL_Renderer* r, const Game& g) {
     if (g.state == ROUNDCLEAR)
         drawJackVictory(r, g.p, g.clearTimer);
     else if (g.state != GAMEOVER)
-        drawPlayer(r, g.p, g.time, g.death.active, g.death.phase, g.death.frame,
-                   frozen, g.freezeColor);
+        drawPlayer(r, g.p, g.jackSprite, g.time, g.death.active, g.death.phase,
+                   g.death.frame, frozen, g.freezeColor);
 
     useScreen(r);
     drawPlayfieldBorder(r, currentScreen(g));
