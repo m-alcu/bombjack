@@ -219,7 +219,18 @@ void drawHud(SDL_Renderer* r, const Game& g) {
             int bPhase = (int)(g.time / 0.1f) % N;
             int sPhase = (bPhase + N / 2) % N;
             Color bc = MULT_PAL[bPhase], sc = MULT_PAL[sPhase];
-            Color borderC = (g.freezeTimer > 0.0f) ? g.freezeColor : bc;
+            static constexpr float BF[4] = {0.45f, 0.65f, 0.83f, 1.0f};
+            int freezePh = (int)(g.time / 0.1f) & 3;
+            // Border leads the wave (phase 0 of the outward ripple).
+            Color borderC;
+            if (g.freezeTimer > 0.0f) {
+                float bright = BF[freezePh];
+                borderC = { (Uint8)(g.freezeColor.r * bright),
+                            (Uint8)(g.freezeColor.g * bright),
+                            (Uint8)(g.freezeColor.b * bright) };
+            } else {
+                borderC = bc;
+            }
             auto drawMult = [&](int idx, SDL_FRect dst) {
                 SDL_SetTextureColorMod(g_multSymbol[idx], sc.r, sc.g, sc.b);
                 SDL_RenderTexture(r, g_multSymbol[idx], nullptr, &dst);
@@ -231,16 +242,27 @@ void drawHud(SDL_Renderer* r, const Game& g) {
             drawMult(0, {96,  0, 16, 16});
             drawMult(m, {112, 0, 16, 16});
 
-            // Side bar bands share the border color cycle.
+            // Side bars: each group lags one step behind the previous, creating an outward wave.
             int step = (g.freezeTimer > 0.0f)
                 ? BAR_STEPS
                 : std::clamp((int)(g.powerMeter * BAR_STEPS / POWER_NEEDED), 0, BAR_STEPS);
             if (step > 0 && g_barRight[0].tex && g_barLeft[0].tex) {
-                Color barC = (g.freezeTimer > 0.0f) ? g.freezeColor : bc;
                 struct Group { int start, count; float margin; };
                 static constexpr Group GROUPS[3] = {{0,3,0}, {3,4,8}, {7,4,16}};
-                for (const auto& grp : GROUPS) {
+                for (int gi = 0; gi < 3; ++gi) {
+                    const Group& grp = GROUPS[gi];
                     if (step <= grp.start) continue;
+                    // Each group is one step further from center → lag by gi+1
+                    Color barC;
+                    if (g.freezeTimer > 0.0f) {
+                        int grpPh = (freezePh - gi - 1 + 4) & 3;
+                        float bright = BF[grpPh];
+                        barC = { (Uint8)(g.freezeColor.r * bright),
+                                 (Uint8)(g.freezeColor.g * bright),
+                                 (Uint8)(g.freezeColor.b * bright) };
+                    } else {
+                        barC = MULT_PAL[(bPhase - gi - 1 + N) % N];
+                    }
                     int idx = std::clamp(step - 1, grp.start, grp.start + grp.count - 1);
                     float bwR = (float)g_barRight[idx].w;
                     float rx  = 128.0f + grp.margin;
