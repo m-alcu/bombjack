@@ -70,11 +70,13 @@ cmake --build build
 ./build/bombjack
 ```
 
-### Quick build (no CMake)
+### Quick build
+
+`build.sh` configures (first run) and builds via CMake:
 
 ```bash
 ./build.sh
-./bombjack
+./build/bombjack
 ```
 
 ### Headless tests
@@ -83,14 +85,14 @@ Run the simulation with scripted input and no window (also validates that every
 sprite's pixel-map rows are rectangular):
 
 ```bash
-./bombjack --selftest 600
+./build/bombjack --selftest 600
 ```
 
 Smoke-test the full render path (textures, tiled platforms, every game state)
 without a display — handy for CI:
 
 ```bash
-SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software ./bombjack --rendertest
+SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software ./build/bombjack --rendertest
 ```
 
 ## Layout

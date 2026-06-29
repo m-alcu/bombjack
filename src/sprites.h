@@ -97,3 +97,9 @@ void drawSprite(SDL_Renderer* r, SpriteId id, float x, float y,
                 float w, float h, bool flip);
 void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
                    bool flip, Uint8 cr, Uint8 cg, Uint8 cb);
+
+// Convenience: tint with a Color (no flip). Sets the colour-mod, draws, resets.
+inline void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
+                          Color c) {
+    drawTexTinted(r, tex, dst, false, c.r, c.g, c.b);
+}

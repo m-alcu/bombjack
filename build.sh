@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
-# Quick one-shot build without CMake. Requires SDL3 + pkg-config.
+# Configure (first run) and build via CMake. Requires SDL3 + pkg-config.
 set -e
 cd "$(dirname "$0")"
-g++ -std=c++17 -O2 -Wall -Wextra src/main.cpp $(pkg-config --cflags --libs sdl3) -o bombjack
-echo "Built ./bombjack — run it with ./bombjack"
+
+BUILD_DIR=build
+if [ ! -f "$BUILD_DIR/CMakeCache.txt" ]; then
+    cmake -S . -B "$BUILD_DIR"
+fi
+cmake --build "$BUILD_DIR"
+echo "Built ./$BUILD_DIR/bombjack — run it with ./$BUILD_DIR/bombjack"

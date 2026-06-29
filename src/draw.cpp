@@ -81,10 +81,7 @@ void drawPlayer(SDL_Renderer* r, const Player& p, const AnimSprite& jack,
             SDL_FRect dst{p.x + PW / 2 - JACK_DRAW_W / 2, p.y + PH - JACK_DRAW_H,
                           JACK_DRAW_W, JACK_DRAW_H};
             int ph = (int)(t / 0.1f) & 3;
-            SDL_Texture* tex = g_jackPhase[f][ph];
-            SDL_SetTextureColorMod(tex, freezeColor.r, freezeColor.g, freezeColor.b);
-            SDL_RenderTexture(r, tex, nullptr, &dst);
-            SDL_SetTextureColorMod(tex, 255, 255, 255);
+            drawTexTinted(r, g_jackPhase[f][ph], dst, freezeColor);
             return;
         }
     }
@@ -267,6 +264,82 @@ void drawBackground(SDL_Renderer* r, int screen, int imgStyle) {
     }
 }
 
+// 16-hue palette for the multiplier / power-bar HUD: the 8 base arcade hues with
+// a midpoint inserted between each adjacent pair (wrapping) for a smooth fade.
+static const std::array<Color, 16>& multPalette() {
+    static const std::array<Color, 16> pal = [] {
+        static constexpr Color base[8] = {
+            {255, 60, 60}, {255,160,  0}, {255,235,  0}, { 60,255, 60},
+            {  0,220,255}, { 80,100,255}, {220, 60,255}, {255, 60,160},
+        };
+        std::array<Color, 16> p{};
+        for (int i = 0; i < 8; ++i) {
+            p[i * 2]     = base[i];
+            p[i * 2 + 1] = lerp(base[i], base[(i + 1) % 8], 0.5f);
+        }
+        return p;
+    }();
+    return pal;
+}
+
+// Rotating-colour multiplier indicator: "x" cell plus the current 1..5 cell.
+// Border hue rotates; the symbol trails half a cycle behind. While frozen, the
+// border shimmers in the freeze colour instead.
+static void drawMultiplier(SDL_Renderer* r, const Game& g) {
+    if (!g_multBorder[0] || !g_multSymbol[0]) return;
+    constexpr int N = 16;
+    const auto& pal = multPalette();
+    int bPhase = (int)(g.time / 0.1f) % N;
+    int sPhase = (bPhase + N / 2) % N;
+    Color symbolC = pal[sPhase];
+    Color borderC = g.freezeTimer > 0.0f
+        ? scale(g.freezeColor, FREEZE_BRIGHT[(int)(g.time / 0.1f) & 3])
+        : pal[bPhase];
+    int m = std::clamp(g.multiplier, 1, 5);
+    auto cell = [&](int idx, SDL_FRect dst) {
+        drawTexTinted(r, g_multSymbol[idx], dst, symbolC);
+        drawTexTinted(r, g_multBorder[idx], dst, borderC);
+    };
+    cell(0, {96,  0, 16, 16});
+    cell(m, {112, 0, 16, 16});
+}
+
+// Power-meter side bars: three concentric groups, each one step further from the
+// centre and lagging the rotating hue by one palette index → an outward wave.
+static void drawPowerBars(SDL_Renderer* r, const Game& g) {
+    if (!g_barRight[0].tex || !g_barLeft[0].tex) return;
+    int step = (g.freezeTimer > 0.0f)
+        ? BAR_STEPS
+        : std::clamp((int)(g.powerMeter * BAR_STEPS / POWER_NEEDED), 0, BAR_STEPS);
+    if (step <= 0) return;
+
+    constexpr int N = 16;
+    const auto& pal = multPalette();
+    int bPhase   = (int)(g.time / 0.1f) % N;
+    int freezePh = (int)(g.time / 0.1f) & 3;
+
+    struct Group { int start, count; float margin; };
+    static constexpr Group GROUPS[3] = {{0,3,0}, {3,4,8}, {7,4,16}};
+    for (int gi = 0; gi < 3; ++gi) {
+        const Group& grp = GROUPS[gi];
+        if (step <= grp.start) continue;
+        Color barC = g.freezeTimer > 0.0f
+            ? scale(g.freezeColor, FREEZE_BRIGHT[(freezePh - gi - 1 + 4) & 3])
+            : pal[(bPhase - (gi + 1) + N) % N];
+        int idx = std::clamp(step - 1, grp.start, grp.start + grp.count - 1);
+
+        float bwR = (float)g_barRight[idx].w;
+        float rx  = 128.0f + grp.margin;
+        drawTexTinted(r, g_barRight[idx].tex, {rx, 0, bwR, 8}, barC);
+        drawTexTinted(r, g_barRight[idx].tex, {rx, 8, bwR, 8}, barC);
+
+        float bwL = (float)g_barLeft[idx].w;
+        float lx  = 96.0f - grp.margin - bwL;
+        drawTexTinted(r, g_barLeft[idx].tex, {lx, 0, bwL, 8}, barC);
+        drawTexTinted(r, g_barLeft[idx].tex, {lx, 8, bwL, 8}, barC);
+    }
+}
+
 void drawHud(SDL_Renderer* r, const Game& g) {
     char buf[64];
     setCol(r, {0, 0, 0});
@@ -278,96 +351,9 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     std::snprintf(buf, sizeof(buf), "%d", g.score - g.phaseStart);
     const float sideRight = sideX + textWidth("SIDE-ONE", 1);
     drawText(r, buf, sideRight - textWidth(buf, 1), 9, 1, {255, 255, 255});
-    {
-        int m = std::clamp(g.multiplier, 1, 5);
-        if (g_multBorder[0] && g_multSymbol[0]) {
-            static const Color BASE_PAL[] = {
-                {255, 60, 60}, {255,160,  0}, {255,235,  0}, { 60,255, 60},
-                {  0,220,255}, { 80,100,255}, {220, 60,255}, {255, 60,160},
-            };
-            constexpr int BASE_N = 8;
-            constexpr int N = BASE_N * 2;
-            // Expand the 8 base hues to 16 by inserting the midpoint between each
-            // adjacent pair (wrapping), so the cycle fades instead of jumping.
-            static const std::array<Color, N> MULT_PAL = [] {
-                std::array<Color, N> p{};
-                for (int i = 0; i < BASE_N; ++i) {
-                    const Color& a = BASE_PAL[i];
-                    const Color& b = BASE_PAL[(i + 1) % BASE_N];
-                    p[i * 2]     = a;
-                    p[i * 2 + 1] = { (Uint8)((a.r + b.r) / 2),
-                                     (Uint8)((a.g + b.g) / 2),
-                                     (Uint8)((a.b + b.b) / 2) };
-                }
-                return p;
-            }();
-            // 0.1s per hue → 16-step cycle runs at half the previous speed.
-            int bPhase = (int)(g.time / 0.1f) % N;
-            int sPhase = (bPhase + N / 2) % N;
-            Color bc = MULT_PAL[bPhase], sc = MULT_PAL[sPhase];
-            static constexpr float BF[4] = {0.45f, 0.65f, 0.83f, 1.0f};
-            int freezePh = (int)(g.time / 0.1f) & 3;
-            // Border leads the wave (phase 0 of the outward ripple).
-            Color borderC;
-            if (g.freezeTimer > 0.0f) {
-                float bright = BF[freezePh];
-                borderC = { (Uint8)(g.freezeColor.r * bright),
-                            (Uint8)(g.freezeColor.g * bright),
-                            (Uint8)(g.freezeColor.b * bright) };
-            } else {
-                borderC = bc;
-            }
-            auto drawMult = [&](int idx, SDL_FRect dst) {
-                SDL_SetTextureColorMod(g_multSymbol[idx], sc.r, sc.g, sc.b);
-                SDL_RenderTexture(r, g_multSymbol[idx], nullptr, &dst);
-                SDL_SetTextureColorMod(g_multSymbol[idx], 255, 255, 255);
-                SDL_SetTextureColorMod(g_multBorder[idx], borderC.r, borderC.g, borderC.b);
-                SDL_RenderTexture(r, g_multBorder[idx], nullptr, &dst);
-                SDL_SetTextureColorMod(g_multBorder[idx], 255, 255, 255);
-            };
-            drawMult(0, {96,  0, 16, 16});
-            drawMult(m, {112, 0, 16, 16});
 
-            // Side bars: each group lags one step behind the previous, creating an outward wave.
-            int step = (g.freezeTimer > 0.0f)
-                ? BAR_STEPS
-                : std::clamp((int)(g.powerMeter * BAR_STEPS / POWER_NEEDED), 0, BAR_STEPS);
-            if (step > 0 && g_barRight[0].tex && g_barLeft[0].tex) {
-                struct Group { int start, count; float margin; };
-                static constexpr Group GROUPS[3] = {{0,3,0}, {3,4,8}, {7,4,16}};
-                for (int gi = 0; gi < 3; ++gi) {
-                    const Group& grp = GROUPS[gi];
-                    if (step <= grp.start) continue;
-                    // Each group is one step further from center → lag by gi+1
-                    Color barC;
-                    if (g.freezeTimer > 0.0f) {
-                        int grpPh = (freezePh - gi - 1 + 4) & 3;
-                        float bright = BF[grpPh];
-                        barC = { (Uint8)(g.freezeColor.r * bright),
-                                 (Uint8)(g.freezeColor.g * bright),
-                                 (Uint8)(g.freezeColor.b * bright) };
-                    } else {
-                        barC = MULT_PAL[(bPhase - (gi + 1) + N) % N];
-                    }
-                    int idx = std::clamp(step - 1, grp.start, grp.start + grp.count - 1);
-                    float bwR = (float)g_barRight[idx].w;
-                    float rx  = 128.0f + grp.margin;
-                    SDL_FRect rt{rx, 0, bwR, 8}, rb{rx, 8, bwR, 8};
-                    SDL_SetTextureColorMod(g_barRight[idx].tex, barC.r, barC.g, barC.b);
-                    SDL_RenderTexture(r, g_barRight[idx].tex, nullptr, &rt);
-                    SDL_RenderTexture(r, g_barRight[idx].tex, nullptr, &rb);
-                    SDL_SetTextureColorMod(g_barRight[idx].tex, 255, 255, 255);
-                    float bwL = (float)g_barLeft[idx].w;
-                    float lx  = 96.0f - grp.margin - bwL;
-                    SDL_FRect lt{lx, 0, bwL, 8}, lb{lx, 8, bwL, 8};
-                    SDL_SetTextureColorMod(g_barLeft[idx].tex, barC.r, barC.g, barC.b);
-                    SDL_RenderTexture(r, g_barLeft[idx].tex, nullptr, &lt);
-                    SDL_RenderTexture(r, g_barLeft[idx].tex, nullptr, &lb);
-                    SDL_SetTextureColorMod(g_barLeft[idx].tex, 255, 255, 255);
-                }
-            }
-        }
-    }
+    drawMultiplier(r, g);
+    drawPowerBars(r, g);
 
     const float top = HUD_H + GAME_H;
     const float l1  = top, l2 = top + 8;
@@ -414,12 +400,8 @@ void drawStartIntro(SDL_Renderer* r, const Game& g) {
 
     for (int i = 0; i < 2; ++i) {
         SDL_FRect d{xs[i], cy, w, h};
-        SDL_SetTextureColorMod(g_startBg[i].tex,
-                               (Uint8)(bgc.r * fade), (Uint8)(bgc.g * fade),
-                               (Uint8)(bgc.b * fade));
-        SDL_RenderTexture(r, g_startBg[i].tex, nullptr, &d);
-        SDL_SetTextureColorMod(g_startText[i].tex, 255, 255, 255);
-        SDL_RenderTexture(r, g_startText[i].tex, nullptr, &d);
+        drawTexTinted(r, g_startBg[i].tex,   d, ::scale(bgc, fade));
+        drawTexTinted(r, g_startText[i].tex, d, {255, 255, 255});
     }
 }
 
