@@ -1,4 +1,5 @@
 #include "enemy.h"
+#include "audio.h"
 #include "game.h"
 #include "levels_data.h"
 #include <algorithm>
@@ -25,6 +26,7 @@ void spawnMummy(Game& g) {
     e.spawnTint = BASIC_COLORS[pick(g.rng)];
     g.transformIdx++;
     g.enemies.push_back(e);
+    audio::play(audio::SND_MUMMY_APPEAR);
 }
 
 void transformMummy(Game& g, Enemy& e) {
@@ -84,7 +86,12 @@ void updateMummy(Game& g, Enemy& e, float dt) {
         if (e.x > pl.x && e.x < pl.x + pl.w && std::fabs((e.y + halfH) - pl.y) < 2.0f) {
             ground = &pl; break;
         }
-    if (!ground) { e.phase = EP_FALL; return; }
+    if (!ground) {
+        if (audio::tagCount("mummy_fall") == 0)
+            audio::play(audio::SND_MUMMY_FALL, "mummy_fall");
+        e.phase = EP_FALL;
+        return;
+    }
     if (ground->y >= FLOOR_TOP - 1.0f) {
         e.phase = EP_DISAPPEAR;
         e.timer = MUMMY_DISAPPEAR_TIME;

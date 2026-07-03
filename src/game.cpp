@@ -1,8 +1,13 @@
 #include "game.h"
+#include "audio.h"
 #include "enemy.h"
 #include <algorithm>
 #include <cmath>
 #include <random>
+
+// Resume the in-game music once the "got power" jingle has finished, mirroring
+// the TEsound finished-callback the Lua original attaches to that sound.
+static void resumeMusic() { audio::resumeTag("music"); }
 
 const leveldata::Layout& currentLayout(const Game& g) {
     int idx = (g.level - 1) % leveldata::LEVEL_COUNT;
@@ -163,6 +168,10 @@ int specialBonusFor(int catched) {
 }
 
 void finishLevel(Game& g) {
+    // Level cleared: silence the loops and sound the "clear" jingle.
+    audio::stopTag("music");
+    audio::stopTag("power");
+    audio::play(audio::SND_CLEAR);
     int bonus = specialBonusFor(g.catched);
     if (bonus > 0) {
         g.state        = SPECIALBONUS;
@@ -170,6 +179,7 @@ void finishLevel(Game& g) {
         g.sb.timer     = SB_BEGIN_TIME;
         g.sb.remaining = bonus;
         g.sb.catched   = g.catched;
+        audio::play(audio::SND_SPECIAL_BONUS, "special_bonus", /*loop=*/true);
     } else {
         g.state      = ROUNDCLEAR;
         g.clearTimer = CLEAR_TIME;
@@ -260,6 +270,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                     g.go.y     = HUD_H + (p.y + PH / 2) * (float)GAME_H / LOGH;
                     g.go.stage = 0;
                     g.go.timer = GAMEOVER_HOLD;
+                    audio::play(audio::SND_GAMEOVER, "gameover");
                 } else {
                     resetPlayer(g, true);
                     restartEnemies(g);
@@ -270,14 +281,24 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         return;
     }
 
-    // Hold simulation during the "START!" intro.
+    // Hold simulation during the "START!" intro. Kick off the in-game music as
+    // soon as the "START!" sprite begins sliding toward the centre so it plays
+    // under the whole intro rather than only once the hold ends.
     if (g.startAnim > 0.0f) {
+        if (audio::tagCount("music") == 0 && audio::tagCount("power") == 0)
+            audio::play(audio::SND_MUSIC, "music", /*loop=*/true);
         g.startAnim -= dt;
         driveJack(g, dt);   // keep his sprite positioned/idle during the hold
         return;
     }
 
     if (p.invuln > 0) p.invuln -= dt;
+
+    // Keep the in-game music looping while Jack is alive and the power jingle
+    // isn't holding the "power" tag (matches the Lua livegame music guard).
+    if (audio::tagCount("music") == 0 && audio::tagCount("power") == 0)
+        audio::play(audio::SND_MUSIC, "music", /*loop=*/true);
+
     const bool oldOnGround = p.onGround;
     // Tracks actions that step the Power orb colour (jumps, wall bumps, landings).
     bool orbStep = in.jumpPressed;
@@ -296,6 +317,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         if (p.onGround) {
             p.vy = JUMP_VEL;
             p.onGround = false;
+            audio::play(audio::SND_JUMP);
         } else if (p.vy < 0) {
             p.vy = 0;
         } else {
@@ -343,6 +365,10 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     if (!oldOnGround && p.onGround) orbStep = true;
     if (g.orb.active && orbStep) g.orb.family = (g.orb.family + 1) % 7;
 
+    // Footstep loop while walking on the ground (one at a time).
+    if (p.onGround && (in.left || in.right) && audio::tagCount("walking") == 0)
+        audio::play(audio::SND_WALKING, "walking");
+
     // Bomb collection.
     for (int i = 0; i < (int)g.bombs.size(); ++i) {
         Bomb& b = g.bombs[i];
@@ -352,6 +378,8 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             b.collected = true;
             g.bombsLeft--;
             g.explosions.push_back({b.x, b.y, 0.0f});
+            audio::play(i == g.litBomb ? audio::SND_TAKE_EXPLODING_BOMB
+                                       : audio::SND_TAKE_BOMB);
             const bool wasLit  = (i == g.litBomb);
             const bool relight = (g.litBomb < 0) || wasLit;
             int gain;
@@ -375,6 +403,9 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 g.orb.vx       = ORB_SPEED * 0.5f;
                 g.orb.vy       = ORB_SPEED * 0.8660254f;
                 g.orb.family   = 0;
+                // Orb on screen: duck the music and loop the "appearing" tone.
+                audio::pauseTag("music");
+                audio::play(audio::SND_POWER_APPEARING, "power", /*loop=*/true);
             }
         }
     }
@@ -440,6 +471,8 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             g.orb.active  = false;
             g.freezeTimer = FREEZE_TIME;
             g.killCount   = 0;
+            audio::stopTag("power");
+            audio::play(audio::SND_GOT_POWER, "power", /*loop=*/false, resumeMusic);
             int idx = (g.orb.family % (int)std::size(POWER_POINTS) +
                        (int)std::size(POWER_POINTS)) % (int)std::size(POWER_POINTS);
             g.freezeColor = POWER_COLORS[idx];
@@ -467,12 +500,13 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         g.bonus.x    += g.bonus.vx * dt;
         const float lo = g.bonus.platX + BONUS_W * 0.5f;
         const float hi = g.bonus.platX + g.bonus.platW - BONUS_W * 0.5f;
-        if (g.bonus.x < lo) { g.bonus.x = lo; g.bonus.vx =  std::fabs(g.bonus.vx); }
-        if (g.bonus.x > hi) { g.bonus.x = hi; g.bonus.vx = -std::fabs(g.bonus.vx); }
+        if (g.bonus.x < lo) { g.bonus.x = lo; g.bonus.vx =  std::fabs(g.bonus.vx); audio::play(audio::SND_BONUS); }
+        if (g.bonus.x > hi) { g.bonus.x = hi; g.bonus.vx = -std::fabs(g.bonus.vx); audio::play(audio::SND_BONUS); }
 
         if (g.bonus.x > p.x - BONUS_W * 0.5f && g.bonus.x < p.x + PW + BONUS_W * 0.5f &&
             g.bonus.y > p.y - BONUS_H * 0.5f && g.bonus.y < p.y + PH + BONUS_H * 0.5f) {
             g.bonus.active = false;
+            audio::play(audio::SND_TAKE_BONUS);
             g.bonusTakens.push_back({g.bonus.x, g.bonus.y, 0.0f});
             switch (g.bonus.kind) {
                 case BK_B: {
@@ -492,6 +526,8 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                     g.score += gain;
                     g.popups.push_back({g.bonus.x, g.bonus.y - 6, 0.0f, gain});
                     g.lives++;
+                    audio::stopTag("music");
+                    audio::stopTag("power");
                     g.state      = ROUNDCLEAR;
                     g.clearTimer = CLEAR_TIME;
                     break;
@@ -562,6 +598,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 g.popups.push_back({e.x, e.y - 6, 0.0f, gain});
                 g.coinPickups.push_back({e.x, e.y, 0.0f});
                 g.killCount++;
+                audio::play(audio::SND_KILL_ENEMY, "kill_ennemy");
                 it = g.enemies.erase(it);
                 continue;
             }
@@ -572,6 +609,9 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             g.death.loops  = 0;
             g.death.anim   = 0.0f;
             g.death.timer  = 0.0f;
+            audio::stopTag("music");
+            audio::stopTag("power");
+            audio::play(audio::SND_TOUCHED);
             p.invuln   = 0.0f;
             p.onGround = false;
             p.vx       = 0.0f;
@@ -616,6 +656,7 @@ void update(Game& g, const Input& in, float dt) {
                 }
             } else {
                 if (g.sb.timer <= 0) {
+                    audio::stopTag("special_bonus");
                     g.level++;
                     startRound(g);
                     g.state = PLAYING;

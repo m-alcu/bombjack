@@ -10,6 +10,7 @@
 #include "background.h"
 #include "game.h"
 #include "draw.h"
+#include "audio.h"
 
 // ---------------------------------------------------------------------------
 // Headless simulation smoke test
@@ -129,6 +130,7 @@ int main(int argc, char** argv) {
 
     buildSprites(ren);
     buildBackground(ren);
+    audio::init();   // silent no-op fallback if no audio device is available
 
     Game g;
     initPlatforms(g);
@@ -198,10 +200,12 @@ int main(int argc, char** argv) {
             acc -= STEP;
         }
 
+        audio::update();   // reap finished one-shots, keep loops fed
         render(ren, g);
         SDL_RenderPresent(ren);
     }
 
+    audio::shutdown();
     destroySprites();
     destroyBackground();
     SDL_DestroyRenderer(ren);

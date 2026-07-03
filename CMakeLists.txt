@@ -12,7 +12,12 @@ add_executable(bombjack
     src/enemy.cpp
     src/game.cpp
     src/draw.cpp
+    src/audio.cpp
 )
+
+# Absolute path to the repo so the game can find assets/sounds/ regardless of
+# the working directory it is launched from.
+target_compile_definitions(bombjack PRIVATE ASSET_ROOT="${CMAKE_SOURCE_DIR}")
 
 # Link SDL3. Prefer pkg-config (reliable on Linux); fall back to the SDL3 CMake
 # config package (common on macOS/vcpkg/Windows).

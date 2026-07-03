@@ -58,6 +58,19 @@ The floaty jump is the heart of Bomb Jack: tap the jump button in mid-air to get
 small upward kicks (you can hover and slowly climb), or hold it to drift down
 gently.
 
+## Sound
+
+Music and effects are ported straight from the original Bomb Jack: jump,
+footsteps, bomb pickups, the power-ball appear/collect jingles, enemy hits and
+kills, bonus coins, level-clear, game-over and the in-game music loop. They live
+in `assets/sounds/` (`.wav` effects + `.mp3` music, the same files as the Lua
+original).
+
+No extra library is needed — playback uses SDL3's built-in audio-stream mixing,
+and MP3s are decoded with the vendored single-header [`dr_mp3.h`](src/dr_mp3.h)
+(same style as `stb_image.h`). If no audio device is available the game simply
+runs silently.
+
 ## Build & run
 
 Requires **SDL3** and a C++17 compiler.

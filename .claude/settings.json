@@ -108,7 +108,19 @@
       "Bash(awk 'NR>=195 && /^void updatePlaying/{f=1} f&&/^}/{print NR\": \"$0; c++; if\\(c==1\\)exit}' src/game.cpp)",
       "Bash(awk -F: '$1>195')",
       "Bash(./build/bombjack --selftest 600)",
-      "Bash(grep -nE \"Rect\\\\[|X\\\\[|static const int|\\\\{[0-9]+, *[0-9]+\" src/sprites.cpp)"
+      "Bash(grep -nE \"Rect\\\\[|X\\\\[|static const int|\\\\{[0-9]+, *[0-9]+\" src/sprites.cpp)",
+      "Bash(pkg-config --exists sdl3)",
+      "Bash(pkg-config --modversion sdl3)",
+      "Bash(echo \"sdl3: $\\(pkg-config --modversion sdl3\\)\")",
+      "Bash(pkg-config --exists sdl3-mixer)",
+      "Bash(pkg-config --modversion sdl3-mixer)",
+      "Bash(ldconfig -p)",
+      "Bash(apt-cache policy *)",
+      "Bash(ffmpeg -version)",
+      "Bash(rm -rf build)",
+      "Bash(SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./build/bombjack --rendertest)",
+      "Bash(timeout 3 env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./build/bombjack)",
+      "Bash(echo \"exit=$? \\(124=timeout, expected\\)\")"
     ],
     "additionalDirectories": [
       "/tmp",
