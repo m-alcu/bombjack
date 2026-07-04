@@ -160,12 +160,13 @@ void shutdown() {
     g_ok = false;
 }
 
-void play(Sid id, const char* tag, bool loop, void (*onFinished)()) {
+void play(Sid id, const char* tag, bool loop, void (*onFinished)(), float gain) {
     if (!g_ok || id < 0 || id >= SND_COUNT || !g_clips[id].buf) return;
 
     SDL_AudioStream* s = SDL_CreateAudioStream(&g_clips[id].spec, &g_devSpec);
     if (!s) return;
     if (!SDL_BindAudioStream(g_dev, s)) { SDL_DestroyAudioStream(s); return; }
+    if (gain != 1.0f) SDL_SetAudioStreamGain(s, gain);
 
     Channel ch;
     ch.stream     = s;

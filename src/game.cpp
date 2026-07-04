@@ -598,7 +598,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 g.popups.push_back({e.x, e.y - 6, 0.0f, gain});
                 g.coinPickups.push_back({e.x, e.y, 0.0f});
                 g.killCount++;
-                audio::play(audio::SND_KILL_ENEMY, "kill_ennemy");
+                audio::play(audio::SND_KILL_ENEMY, "kill_ennemy", false, nullptr, 0.5f);
                 it = g.enemies.erase(it);
                 continue;
             }

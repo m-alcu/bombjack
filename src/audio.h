@@ -45,9 +45,9 @@ void update();
 
 // Play a clip. `tag` (optional) groups the channel for stop/pause/count.
 // `loop` keeps it repeating until stopped. `onFinished` fires from update()
-// when a non-looping channel drains.
+// when a non-looping channel drains. `gain` scales volume (1.0 = full).
 void play(Sid id, const char* tag = nullptr, bool loop = false,
-          void (*onFinished)() = nullptr);
+          void (*onFinished)() = nullptr, float gain = 1.0f);
 
 // Tag operations mirror TEsound.stop / pause / resume / findTag.
 void stopTag(const char* tag);
