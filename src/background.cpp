@@ -159,11 +159,17 @@ void drawPlatformShaded(SDL_Renderer* r, const SDL_FRect& pl, int screen,
     if (h > w) {
         const VJoin top = findVJoin(plats, pl, true);
         const VJoin bot = findVJoin(plats, pl, false);
+        // Only a T-shape join at the top (a platform spanning across, neither of
+        // its ends at the girder) gets the 3px crossing; everything else — and
+        // the whole bottom extreme — keeps its original behaviour.
+        const bool topCross = top.joined && !top.outerLeft && !top.outerRight;
         for (int i = 0; i < w; ++i) {
             int band = std::min(7, (i * 8) / w);
             setCol(r, pal[band]);
             bool edge = (i == 0 || i == w - 1);
-            float t = top.joined ? (float)y - vMiterLen(top, i, w)
+            int cham = std::min(3, std::min(i, w - 1 - i));   // skip 3px at both upper corners
+            float t = topCross   ? (float)(y - cham)
+                    : top.joined ? (float)y - vMiterLen(top, i, w)
                                  : (float)y + (edge ? 1.0f : 0.0f);
             float b = bot.joined ? (float)(y + h) + vMiterLen(bot, i, w)
                                  : (float)(y + h) - (edge ? 1.0f : 0.0f);
