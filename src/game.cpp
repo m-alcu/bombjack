@@ -126,15 +126,16 @@ void startRound(Game& g) {
     g.bonus.active   = false;
     g.nextBonusScore = (g.score / BONUS_LIMIT + 1) * BONUS_LIMIT;
     g.startAnim      = START_TOTAL;
+    if (g.alwaysS) spawnBonus(g, BK_S);  // OPTIONS: guaranteed S bonus per level
 }
 
 void optionAdjust(Game& g, int d) {
-    if (g.optSel == 0)
-        g.startLevel = std::clamp(g.startLevel + d, 1, leveldata::LEVEL_COUNT);
-    else if (g.optSel == 1)
-        g.startLives = std::clamp(g.startLives + d, 1, OPT_MAX_LIVES);
-    else
-        g.imgStyle = (g.imgStyle + d + OPT_IMG_STYLES) % OPT_IMG_STYLES;
+    switch (g.optSel) {
+        case 0: g.startLevel = std::clamp(g.startLevel + d, 1, leveldata::LEVEL_COUNT); break;
+        case 1: g.startLives = std::clamp(g.startLives + d, 1, OPT_MAX_LIVES);          break;
+        case 2: g.imgStyle   = (g.imgStyle + d + OPT_IMG_STYLES) % OPT_IMG_STYLES;      break;
+        case 3: g.alwaysS    = !g.alwaysS;                                              break;
+    }
 }
 
 void startGame(Game& g) {
@@ -500,8 +501,9 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         g.bonus.x    += g.bonus.vx * dt;
         const float lo = g.bonus.platX + BONUS_W * 0.5f;
         const float hi = g.bonus.platX + g.bonus.platW - BONUS_W * 0.5f;
-        if (g.bonus.x < lo) { g.bonus.x = lo; g.bonus.vx =  std::fabs(g.bonus.vx); audio::play(audio::SND_BONUS); }
-        if (g.bonus.x > hi) { g.bonus.x = hi; g.bonus.vx = -std::fabs(g.bonus.vx); audio::play(audio::SND_BONUS); }
+        const float bounceGain = g.bonus.kind == BK_S ? 0.5f : 1.0f;  // S bonus quieter
+        if (g.bonus.x < lo) { g.bonus.x = lo; g.bonus.vx =  std::fabs(g.bonus.vx); audio::play(audio::SND_BONUS, nullptr, false, nullptr, bounceGain); }
+        if (g.bonus.x > hi) { g.bonus.x = hi; g.bonus.vx = -std::fabs(g.bonus.vx); audio::play(audio::SND_BONUS, nullptr, false, nullptr, bounceGain); }
 
         if (g.bonus.x > p.x - BONUS_W * 0.5f && g.bonus.x < p.x + PW + BONUS_W * 0.5f &&
             g.bonus.y > p.y - BONUS_H * 0.5f && g.bonus.y < p.y + PH + BONUS_H * 0.5f) {
@@ -528,8 +530,9 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                     g.lives++;
                     audio::stopTag("music");
                     audio::stopTag("power");
-                    g.state      = ROUNDCLEAR;
-                    g.clearTimer = CLEAR_TIME;
+                    g.state       = LUCKY;   // "YOU ARE LUCKY / ONE MORE PLAY" screen
+                    g.lucky.phase = 0;
+                    g.lucky.timer = 0.0f;
                     break;
                 }
             }
@@ -657,6 +660,23 @@ void update(Game& g, const Input& in, float dt) {
             } else {
                 if (g.sb.timer <= 0) {
                     audio::stopTag("special_bonus");
+                    g.level++;
+                    startRound(g);
+                    g.state = PLAYING;
+                }
+            }
+            break;
+        case LUCKY:
+            if (g.lucky.phase == 0) {
+                // Text glides in from the corners; once it settles, hold a beat.
+                g.lucky.timer += dt;
+                if (g.lucky.timer >= LUCKY_SLIDE_TIME) {
+                    g.lucky.phase = 1;
+                    g.lucky.timer = LUCKY_HOLD_TIME;
+                }
+            } else {
+                g.lucky.timer -= dt;
+                if (g.lucky.timer <= 0.0f) {
                     g.level++;
                     startRound(g);
                     g.state = PLAYING;

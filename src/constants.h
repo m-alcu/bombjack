@@ -48,6 +48,8 @@ constexpr float CLEAR_TIME  = 3.2f;
 constexpr float SB_BEGIN_TIME = 2.0f;
 constexpr float SB_END_TIME   = 1.5f;
 constexpr float SB_SCORE_TIME = 0.1f;
+constexpr float LUCKY_SLIDE_TIME = 1.1f;  // corner text glides to centre
+constexpr float LUCKY_HOLD_TIME  = 2.2f;  // hold "ONE MORE PLAY" before next round
 constexpr float FREEZE_TIME   = 5.0f;
 constexpr float POWER_NEEDED  = 8.0f;
 constexpr float ORB_SPEED     = 60.0f;
@@ -147,6 +149,6 @@ constexpr int BG_W = 224, BG_H = 224;
 constexpr int GRID_BG_COUNT = 7;
 
 // OPTIONS screen rows and value bounds
-constexpr int OPT_COUNT      = 3;
+constexpr int OPT_COUNT      = 4;
 constexpr int OPT_MAX_LIVES  = 9;
 constexpr int OPT_IMG_STYLES = GRID_BG_COUNT + 2;  // CLASSIC + 7 grids + NO

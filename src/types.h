@@ -21,7 +21,7 @@ constexpr Color POWER_COLORS[7] = {
 };
 
 enum BonusKind  { BK_B, BK_E, BK_S };
-enum State      { TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, GAMEOVER };
+enum State      { TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, LUCKY, GAMEOVER };
 enum DeathPhase { DP_NONE, DP_DANCING, DP_FALLING, DP_DEAD, DP_WAIT };
 
 struct Input  { bool left, right, up, down, jumpHeld, jumpPressed; };
@@ -93,6 +93,12 @@ struct GameOverState {
     int   stage = 0;
 };
 
+// "YOU ARE LUCKY / ONE MORE PLAY" screen shown on collecting an S bonus.
+struct LuckyState {
+    int   phase = 0;   // 0 = text sliding in, 1 = hold before next round
+    float timer = 0;   // slide progress (phase 0) then hold countdown (phase 1)
+};
+
 // ---------------------------------------------------------------------------
 // God struct: top-level game state
 // ---------------------------------------------------------------------------
@@ -101,6 +107,7 @@ struct Game {
     int   score = 0, lives = 3, level = 1, bombsLeft = 0;
     int   startLevel = 1, startLives = 3;
     int   imgStyle = 0, optSel = 0;
+    bool  alwaysS = false;   // OPTIONS toggle: spawn an S bonus every level
     int   litBomb  = -1, catched = 0;
     int   phaseStart = 0, multiplier = 1;
     int   nextBonusScore = BONUS_LIMIT;
@@ -115,6 +122,7 @@ struct Game {
     OrbState      orb;
     BonusState    bonus;
     SBState       sb;
+    LuckyState    lucky;
     GameOverState go;
 
     Player p{};

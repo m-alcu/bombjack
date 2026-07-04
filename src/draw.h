@@ -28,6 +28,8 @@ void drawStartIntro(SDL_Renderer* r, const Game& g);
 
 void drawSpecialBonus(SDL_Renderer* r, const Game& g);
 
+void drawLucky(SDL_Renderer* r, const Game& g);
+
 void drawOptions(SDL_Renderer* r, const Game& g);
 
 void render(SDL_Renderer* r, const Game& g);

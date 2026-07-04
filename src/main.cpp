@@ -65,7 +65,7 @@ static int renderTest() {
     buildJackSprite(g.jackSprite);
     startGame(g);
     int frames = 0;
-    for (State st : {TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, GAMEOVER}) {
+    for (State st : {TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, LUCKY, GAMEOVER}) {
         g.state = st;
         render(ren, g);
         SDL_RenderPresent(ren);

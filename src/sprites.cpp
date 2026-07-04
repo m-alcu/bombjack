@@ -36,6 +36,7 @@ Sprite g_explFrames[3];
 Sprite g_pickCoinFrames[4];
 Sprite g_startBg[2];
 Sprite g_startText[2];
+Sprite g_luckyFrame[LUCKY_PHASES];
 
 SDL_Texture* g_jackTex[JF_COUNT]      = {};
 SDL_Texture* g_jackPhase[JF_COUNT][4] = {};
@@ -221,6 +222,31 @@ void buildSprites(SDL_Renderer* ren) {
         g_bonusFrames[i] = cropR(atlas::BONUS_B[i]);
         g_bonusE[i]      = cropR(atlas::BONUS_E[i]);
         g_bonusS[i]      = cropR(atlas::BONUS_S[i]);
+    }
+
+    // "YOU ARE LUCKY" frame: bake LUCKY_PHASES variants where the bright yellow
+    // band sits at a different radius, so cycling them animates a colour wave
+    // rolling outward from the centre. The transparent centre is preserved.
+    {
+        SDL_Surface* base = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+        SDL_Rect src{atlas::LUCKY_FRAME.x, atlas::LUCKY_FRAME.y, 64, 64};
+        SDL_BlitSurface(atlas, &src, base, nullptr);
+        for (int p = 0; p < LUCKY_PHASES; ++p) {
+            float off = (float)p / LUCKY_PHASES * 6.2831853f;
+            SDL_Surface* sv = SDL_CreateSurface(64, 64, SDL_PIXELFORMAT_RGBA32);
+            for (int y = 0; y < 64; ++y)
+                for (int x = 0; x < 64; ++x) {
+                    const Uint8* sp = (const Uint8*)base->pixels + y * base->pitch + x * 4;
+                    Uint8* dp = (Uint8*)sv->pixels + y * sv->pitch + x * 4;
+                    if (sp[3] == 0) { dp[0] = dp[1] = dp[2] = dp[3] = 0; continue; }
+                    float d = std::max(std::fabs(x - 31.5f), std::fabs(y - 31.5f));
+                    int v = (int)(160.0f + 95.0f * std::sin(d * 0.5f - off));
+                    dp[0] = dp[1] = (Uint8)std::clamp(v, 0, 255); dp[2] = 0; dp[3] = 255;
+                }
+            g_luckyFrame[p] = {64, 64, texFromSurface(ren, sv)};
+            SDL_DestroySurface(sv);
+        }
+        SDL_DestroySurface(base);
     }
 
     // Transformed chasers (2 animation frames each).
@@ -426,6 +452,7 @@ void destroySprites() {
     for (Sprite& s : g_pickCoinFrames)  ds(s);
     for (Sprite& s : g_startBg)         ds(s);
     for (Sprite& s : g_startText)       ds(s);
+    for (Sprite& s : g_luckyFrame)      ds(s);
     for (SDL_Texture*& t : g_jackTex)   dt(t);
     for (auto& row : g_jackPhase) for (SDL_Texture*& t : row) dt(t);
     for (JackVarFrame& f : g_jackDance) dv(f);

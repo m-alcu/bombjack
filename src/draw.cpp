@@ -424,6 +424,52 @@ void drawSpecialBonus(SDL_Renderer* r, const Game& g) {
     }
 }
 
+// "YOU ARE LUCKY / ONE MORE PLAY" screen (shown on collecting an S bonus).
+// A hollow yellow frame with the spinning S coin in its centre pulses through
+// yellow shades; the two reward lines glide in from the top corners and settle
+// stacked below the frame.
+void drawLucky(SDL_Renderer* r, const Game& g) {
+    const float cx = SCREEN_W / 2.0f;
+    const Sprite& frame = g_luckyFrame[(int)(g.time * 6.0f) % LUCKY_PHASES];
+    const float fw = frame.w, fh = frame.h;                 // 64x64
+    const float fx = cx - fw / 2.0f;
+    const float fcy = SCREEN_H / 2.0f;                       // frame+coin centred on screen
+    const float fy = fcy - fh / 2.0f;                        // frame top
+
+    // "YOU ARE LUCKY" in red above the frame.
+    drawTextCentered(r, "YOU ARE LUCKY", cx, fy - 14, 1, {255, 40, 40});
+
+    // Frame whose bright yellow band rolls outward from the centre.
+    if (frame.tex) {
+        SDL_FRect dst{fx, fy, fw, fh};
+        SDL_RenderTexture(r, frame.tex, nullptr, &dst);
+    }
+
+    // Spinning S coin nested in the frame's hollow centre, drawn at the same
+    // on-screen size it has in-level (world sprites render at GAME_W/LOGW, 2x).
+    const Sprite& coin = g_bonusS[(int)(g.time * 12.0f) % 4];
+    if (coin.tex) {
+        const float scale = 2.0f * (float)GAME_W / (float)LOGW;
+        const float cw = coin.w * scale, ch = coin.h * scale;
+        SDL_FRect dst{cx - cw / 2, fcy - ch / 2, cw, ch};
+        SDL_RenderTexture(r, coin.tex, nullptr, &dst);
+    }
+
+    // Two reward lines glide from the top corners to their stacked rest spots.
+    float p = g.lucky.phase == 0
+                  ? std::clamp(g.lucky.timer / LUCKY_SLIDE_TIME, 0.0f, 1.0f)
+                  : 1.0f;
+    float e = p * p * (3.0f - 2.0f * p);                     // smoothstep ease
+    const float restY1 = fy + fh + 12.0f;
+    const float restY2 = restY1 + 12.0f;
+    auto lerp = [](float a, float b, float t) { return a + (b - a) * t; };
+
+    float x1 = lerp(-40.0f, cx, e), y1 = lerp(HUD_H + 6.0f, restY1, e);
+    float x2 = lerp(SCREEN_W + 40.0f, cx, e), y2 = lerp(HUD_H + 6.0f, restY2, e);
+    drawTextCentered(r, "YOU CAN ENJOY", x1, y1, 1, {255, 255, 255});
+    drawTextCentered(r, "ONE MORE PLAY", x2, y2, 1, {255, 255, 255});
+}
+
 void drawOptions(SDL_Renderer* r, const Game& g) {
     useScreen(r);
     setCol(r, {0, 0, 0});
@@ -434,7 +480,7 @@ void drawOptions(SDL_Renderer* r, const Game& g) {
         "CLASSIC", "PLACES1", "PLACES2", "PLACES3", "PLACES4",
         "PLACES5", "SPACE1", "SPACE2", "NO"
     };
-    const char* labels[OPT_COUNT] = {"START LEVEL", "LIVES", "NEW IMAGES"};
+    const char* labels[OPT_COUNT] = {"START LEVEL", "LIVES", "NEW IMAGES", "S BONUS"};
     const float rowY0 = HUD_H + 80;
     for (int i = 0; i < OPT_COUNT; ++i) {
         bool sel = (g.optSel == i);
@@ -449,7 +495,8 @@ void drawOptions(SDL_Renderer* r, const Game& g) {
         char vbuf[24];
         if (i == 0)      std::snprintf(vbuf, sizeof(vbuf), "%d", g.startLevel);
         else if (i == 1) std::snprintf(vbuf, sizeof(vbuf), "%d", g.startLives);
-        else             std::snprintf(vbuf, sizeof(vbuf), "%s", imgNames[g.imgStyle]);
+        else if (i == 2) std::snprintf(vbuf, sizeof(vbuf), "%s", imgNames[g.imgStyle]);
+        else             std::snprintf(vbuf, sizeof(vbuf), "%s", g.alwaysS ? "ON" : "OFF");
         drawText(r, vbuf, 150, y, 1, c);
     }
 
@@ -468,6 +515,15 @@ void render(SDL_Renderer* r, const Game& g) {
         setCol(r, {0, 0, 0});
         SDL_RenderClear(r);
         drawSpecialBonus(r, g);
+        drawHud(r, g);
+        return;
+    }
+
+    if (g.state == LUCKY) {
+        useScreen(r);
+        setCol(r, {0, 0, 0});
+        SDL_RenderClear(r);
+        drawLucky(r, g);
         drawHud(r, g);
         return;
     }
