@@ -31,7 +31,9 @@ enum Sid {
     SND_BONUS,               // bonus.wav — B/E/S coin bounces
     SND_TAKE_BONUS,          // take_bonus.wav — B/E/S coin collected
     SND_GOT_SPECIAL,         // 04 Got a Special Coin.wav — S-bonus "lucky" screen
-    SND_MUSIC,               // 03_Ringo..._BGM_1.mp3 — in-game music loop
+    SND_MUSIC,               // 03_Ringo..._BGM_1.mp3 — in-game music, levels %3==1
+    SND_MUSIC_2,             // 06_BGM_2.mp3 — in-game music, levels %3==0 (3,6,9…)
+    SND_MUSIC_3,             // 10_Lady_Madonna_BGM3.mp3 — in-game music, levels %3==2
     SND_COUNT
 };
 

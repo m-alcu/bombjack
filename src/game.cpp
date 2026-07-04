@@ -9,6 +9,17 @@
 // the TEsound finished-callback the Lua original attaches to that sound.
 static void resumeMusic() { audio::resumeTag("music"); }
 
+// In-game BGM rotates over three tracks by level number, matching the Godot
+// reference (each Scenes/LevelN.tscn hard-codes its stream): %3==1 → BGM 1,
+// %3==2 → BGM 3, %3==0 → BGM 2 (levels 3, 6, 9…).
+static audio::Sid musicForLevel(int level) {
+    switch (((level % 3) + 3) % 3) {
+        case 1:  return audio::SND_MUSIC;
+        case 2:  return audio::SND_MUSIC_3;
+        default: return audio::SND_MUSIC_2;
+    }
+}
+
 const leveldata::Layout& currentLayout(const Game& g) {
     int idx = (g.level - 1) % leveldata::LEVEL_COUNT;
     return leveldata::layouts[leveldata::levels[idx].layout];
@@ -287,7 +298,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     // under the whole intro rather than only once the hold ends.
     if (g.startAnim > 0.0f) {
         if (audio::tagCount("music") == 0 && audio::tagCount("power") == 0)
-            audio::play(audio::SND_MUSIC, "music", /*loop=*/true);
+            audio::play(musicForLevel(g.level), "music", /*loop=*/true);
         g.startAnim -= dt;
         driveJack(g, dt);   // keep his sprite positioned/idle during the hold
         return;
@@ -298,7 +309,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     // Keep the in-game music looping while Jack is alive and the power jingle
     // isn't holding the "power" tag (matches the Lua livegame music guard).
     if (audio::tagCount("music") == 0 && audio::tagCount("power") == 0)
-        audio::play(audio::SND_MUSIC, "music", /*loop=*/true);
+        audio::play(musicForLevel(g.level), "music", /*loop=*/true);
 
     const bool oldOnGround = p.onGround;
     // Tracks actions that step the Power orb colour (jumps, wall bumps, landings).
