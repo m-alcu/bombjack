@@ -120,7 +120,8 @@
       "Bash(rm -rf build)",
       "Bash(SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./build/bombjack --rendertest)",
       "Bash(timeout 3 env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./build/bombjack)",
-      "Bash(echo \"exit=$? \\(124=timeout, expected\\)\")"
+      "Bash(echo \"exit=$? \\(124=timeout, expected\\)\")",
+      "Bash(git -C /home/marti/proy/bombjack ls-files bombjack-resources)"
     ],
     "additionalDirectories": [
       "/tmp",

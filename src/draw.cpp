@@ -233,7 +233,7 @@ void drawPowerOrb(SDL_Renderer* r, float x, float y, float t, int family) {
     int phase = (int)(t / 0.1f) & 3;
     const Sprite& f = g_orbCycle[fam][phase];
     if (f.tex) {
-        const float w = 28.8f * SPRITE_AR, h = 28.8f;
+        const float w = 24.0f * SPRITE_AR, h = 24.0f;
         SDL_FRect dst{x - w / 2, y - h / 2, w, h};
         SDL_RenderTexture(r, f.tex, nullptr, &dst);
     }
