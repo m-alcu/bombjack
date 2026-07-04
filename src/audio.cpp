@@ -61,7 +61,7 @@ const char* kFile[SND_COUNT] = {
     "06_BGM_2.mp3",
     "10_Lady_Madonna_BGM3.mp3",
     "01 Title.wav",
-    "14 Name Entry 2.wav",
+    "13_Name_Entry_1.mp3",
 };
 
 #ifndef ASSET_ROOT
