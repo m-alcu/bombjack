@@ -63,9 +63,10 @@ static int renderTest() {
     Game g;
     initPlatforms(g);
     buildJackSprite(g.jackSprite);
+    loadHiScores(g);
     startGame(g);
     int frames = 0;
-    for (State st : {TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, LUCKY, GAMEOVER}) {
+    for (State st : {TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, LUCKY, GAMEOVER, NAMEENTRY}) {
         g.state = st;
         render(ren, g);
         SDL_RenderPresent(ren);
@@ -135,6 +136,7 @@ int main(int argc, char** argv) {
     Game g;
     initPlatforms(g);
     buildJackSprite(g.jackSprite);
+    loadHiScores(g);   // seeds the Godot default table on first run
 
     bool running  = true;
     bool jumpEdge = false;
@@ -148,7 +150,31 @@ int main(int argc, char** argv) {
             if (e.type == SDL_EVENT_QUIT) running = false;
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat) {
                 SDL_Scancode sc = e.key.scancode;
-                if (sc == SDL_SCANCODE_Q) running = false;
+                if (sc == SDL_SCANCODE_Q && g.state != NAMEENTRY) running = false;
+                else if (g.state == NAMEENTRY) {
+                    // High-score name entry: type A-Z / 0-9, backspace, enter.
+                    if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) {
+                        if (g.hs.len < NAME_MAX)
+                            g.hs.entry[g.hs.len++] = (char)('A' + (sc - SDL_SCANCODE_A));
+                        g.hs.entry[g.hs.len] = '\0';
+                    } else if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) {
+                        if (g.hs.len < NAME_MAX)
+                            g.hs.entry[g.hs.len++] = (char)('1' + (sc - SDL_SCANCODE_1));
+                        g.hs.entry[g.hs.len] = '\0';
+                    } else if (sc == SDL_SCANCODE_0) {
+                        if (g.hs.len < NAME_MAX) g.hs.entry[g.hs.len++] = '0';
+                        g.hs.entry[g.hs.len] = '\0';
+                    } else if (sc == SDL_SCANCODE_BACKSPACE) {
+                        if (g.hs.len > 0) g.hs.entry[--g.hs.len] = '\0';
+                    } else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) {
+                        if (g.hs.len > 0) confirmNameEntry(g);
+                    } else if (sc == SDL_SCANCODE_ESCAPE) {
+                        audio::stopTag("nameentry");   // cancel: back to title
+                        g.hs.showTable  = true;
+                        g.hs.flashTimer = 0.0f;
+                        g.state = TITLE;
+                    }
+                }
                 else if (g.state == OPTIONS) {
                     switch (sc) {
                         case SDL_SCANCODE_ESCAPE:

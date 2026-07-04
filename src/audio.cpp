@@ -60,6 +60,8 @@ const char* kFile[SND_COUNT] = {
     "03_Ringo_no_Mori_no_Koneko_Tachi_BGM_1.mp3",
     "06_BGM_2.mp3",
     "10_Lady_Madonna_BGM3.mp3",
+    "01 Title.wav",
+    "14 Name Entry 2.wav",
 };
 
 #ifndef ASSET_ROOT

@@ -34,6 +34,8 @@ enum Sid {
     SND_MUSIC,               // 03_Ringo..._BGM_1.mp3 — in-game music, levels %3==1
     SND_MUSIC_2,             // 06_BGM_2.mp3 — in-game music, levels %3==0 (3,6,9…)
     SND_MUSIC_3,             // 10_Lady_Madonna_BGM3.mp3 — in-game music, levels %3==2
+    SND_TITLE,               // 01 Title.wav — title-screen music loop
+    SND_NAME_ENTRY,          // 14 Name Entry 2.wav — high-score name-entry screen
     SND_COUNT
 };
 

@@ -122,7 +122,13 @@
       "Bash(timeout 3 env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy ./build/bombjack)",
       "Bash(echo \"exit=$? \\(124=timeout, expected\\)\")",
       "Bash(git -C /home/marti/proy/bombjack ls-files bombjack-resources)",
-      "Bash(cmake --build .)"
+      "Bash(cmake --build .)",
+      "Bash(rm -f hiscores.dat)",
+      "Bash(./build/bombjack --rendertest)",
+      "Bash(cat hiscores.dat)",
+      "Bash(awk 'NR==1{print \"top:\",$0} {s[NR]=$1} END{ok=1; for\\(i=2;i<=NR;i++\\) if\\(s[i]>s[i-1]\\) ok=0; print \\(ok?\"scores descending: OK\":\"NOT descending\"\\); print \"rows:\",NR}' hiscores.dat)",
+      "Bash(awk '{s[NR]=$1} END{ok=1; for\\(i=2;i<=NR;i++\\) if\\(s[i]>s[i-1]\\) ok=0; print \\(ok?\"descending: OK\":\"NOT descending\"\\)}' hiscores.dat)",
+      "Bash(./build/bombjack --selftest 4000)"
     ],
     "additionalDirectories": [
       "/tmp",

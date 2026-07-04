@@ -3,6 +3,8 @@
 #include "enemy.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstring>
 #include <random>
 
 // Resume the in-game music once the "got power" jingle has finished, mirroring
@@ -150,6 +152,7 @@ void optionAdjust(Game& g, int d) {
 }
 
 void startGame(Game& g) {
+    audio::stopTag("title");   // leave the title-screen music behind
     g.score     = 0;
     g.lives     = g.startLives;
     g.level     = g.startLevel;
@@ -159,6 +162,95 @@ void startGame(Game& g) {
     g.livesLost = 0;
     initPlatforms(g);
     startRound(g);
+}
+
+// ---------------------------------------------------------------------------
+// High-score table (name entry + persistence), mirroring the Godot game.
+// ---------------------------------------------------------------------------
+#ifndef ASSET_ROOT
+#define ASSET_ROOT "."
+#endif
+static const char* kHiScorePath = ASSET_ROOT "/hiscores.dat";
+
+// Names the Godot reference seeds random entries from (Menu.gd scoreName).
+static const char* const kSeedNames[] = {
+    "ROBERT", "OLIVIER", "JEAN", "PAUL", "NICOLAS", "PIERRE",
+    "EMMANUEL", "LAURENT", "DIDIER", "ANDRE", "FRANCOIS", "DAVID",
+};
+
+static void setEntryName(HiScoreEntry& e, const char* name) {
+    std::strncpy(e.name, name, NAME_MAX);
+    e.name[NAME_MAX] = '\0';
+}
+
+// Mirror Godot createOrLoadScore()'s seed: a fixed unbeatable top entry, then
+// nine randomized rows with strictly descending scores.
+static void seedDefaultHiScores(Game& g) {
+    g.hi[0].score = 20010960;
+    g.hi[0].level = 255;
+    setEntryName(g.hi[0], "BONDAVALLI");
+    int maxi = 100000;
+    for (int i = 1; i < HISCORE_COUNT; ++i) {
+        int score = (int)(g.rng() % (unsigned)maxi) + 2000;
+        g.hi[i].score = score;
+        g.hi[i].level = (int)(g.rng() % 12) + 5;
+        setEntryName(g.hi[i], kSeedNames[g.rng() % (sizeof(kSeedNames) / sizeof(kSeedNames[0]))]);
+        maxi = score;   // bias toward smaller values (Godot's own createOrLoadScore)
+    }
+    // Godot's +2000 can overshoot `maxi`, so the raw seed isn't strictly sorted;
+    // sort descending to keep the table (and insert/qualify) well-ordered.
+    std::sort(std::begin(g.hi), std::end(g.hi),
+              [](const HiScoreEntry& a, const HiScoreEntry& b) { return a.score > b.score; });
+}
+
+void saveHiScores(const Game& g) {
+    std::FILE* f = std::fopen(kHiScorePath, "w");
+    if (!f) return;
+    for (const HiScoreEntry& e : g.hi)
+        std::fprintf(f, "%d %s %d\n", e.score, e.name[0] ? e.name : "-", e.level);
+    std::fclose(f);
+}
+
+void loadHiScores(Game& g) {
+    std::FILE* f = std::fopen(kHiScorePath, "r");
+    if (!f) { seedDefaultHiScores(g); saveHiScores(g); return; }
+    int n = 0;
+    for (; n < HISCORE_COUNT; ++n) {
+        char name[64] = {};
+        int score = 0, level = 0;
+        if (std::fscanf(f, "%d %63s %d", &score, name, &level) != 3) break;
+        g.hi[n].score = score;
+        g.hi[n].level = level;
+        setEntryName(g.hi[n], name);
+    }
+    std::fclose(f);
+    if (n < HISCORE_COUNT) { seedDefaultHiScores(g); saveHiScores(g); }  // corrupt/short → reseed
+}
+
+bool hiScoreQualifies(const Game& g) {
+    return g.score > g.hi[HISCORE_COUNT - 1].score;
+}
+
+// Insert the current score under `name`, shifting lower rows down (Godot addScore).
+void insertHiScore(Game& g, const char* name) {
+    for (int i = 0; i < HISCORE_COUNT; ++i) {
+        if (g.score > g.hi[i].score) {
+            for (int j = HISCORE_COUNT - 1; j > i; --j) g.hi[j] = g.hi[j - 1];
+            g.hi[i].score = g.score;
+            g.hi[i].level = g.level;
+            setEntryName(g.hi[i], name && name[0] ? name : "-");
+            break;
+        }
+    }
+}
+
+void confirmNameEntry(Game& g) {
+    insertHiScore(g, g.hs.entry);
+    saveHiScores(g);
+    audio::stopTag("nameentry");
+    g.hs.showTable  = true;   // Godot putScore: show the fresh table first
+    g.hs.flashTimer = 0.0f;
+    g.state = TITLE;
 }
 
 int nextLitBomb(const Game& g, int orderMin) {
@@ -643,6 +735,14 @@ void update(Game& g, const Input& in, float dt) {
     g.time += dt;
     switch (g.state) {
         case TITLE:
+            if (audio::tagCount("title") == 0)
+                audio::play(audio::SND_TITLE, "title", /*loop=*/true);
+            // Attract loop: alternate the banner and the high-score table.
+            g.hs.flashTimer += dt;
+            if (g.hs.flashTimer >= TITLE_FLASH_TIME) {
+                g.hs.flashTimer = 0.0f;
+                g.hs.showTable  = !g.hs.showTable;
+            }
             if (in.jumpPressed) startGame(g);
             break;
         case OPTIONS:
@@ -706,9 +806,25 @@ void update(Game& g, const Input& in, float dt) {
                 if (g.go.x == cx) g.go.stage = 2;
             } else {
                 g.go.timer -= dt;
-                if (g.go.timer <= 0.0f) g.state = TITLE;
+                if (g.go.timer <= 0.0f) {
+                    audio::stopTag("gameover");
+                    if (hiScoreQualifies(g)) {
+                        // Made the table: type a name (with the entry jingle).
+                        g.hs.entry[0] = '\0';
+                        g.hs.len      = 0;
+                        audio::play(audio::SND_NAME_ENTRY, "nameentry");
+                        g.state = NAMEENTRY;
+                    } else {
+                        // Didn't qualify: back to the title, table shown first.
+                        g.hs.showTable  = true;
+                        g.hs.flashTimer = 0.0f;
+                        g.state = TITLE;
+                    }
+                }
             }
             break;
         }
+        case NAMEENTRY:
+            break;   // passive; keyboard handled in the event loop (main.cpp)
     }
 }

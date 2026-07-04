@@ -470,6 +470,54 @@ void drawLucky(SDL_Renderer* r, const Game& g) {
     drawTextCentered(r, "ONE MORE PLAY", x2, y2, 1, {255, 255, 255});
 }
 
+// High-score table ("BEST PLAYERS"), shown on the attract loop and after a
+// qualifying game. Columns are placed at fixed x so the fixed-width score/level
+// stay aligned; the top row colour-cycles like the Godot menu's animated line.
+void drawHiScores(SDL_Renderer* r, const Game& g) {
+    const float cx = SCREEN_W / 2.0f;
+    drawTextCentered(r, "BEST PLAYERS", cx, HUD_H + 8, 1, {255, 230, 60});
+
+    const float rankX = 10, scoreX = 34, nameX = 104, lvlX = 190;
+    drawText(r, "RK",    rankX,  HUD_H + 26, 1, {120, 200, 255});
+    drawText(r, "SCORE", scoreX, HUD_H + 26, 1, {120, 200, 255});
+    drawText(r, "NAME",  nameX,  HUD_H + 26, 1, {120, 200, 255});
+    drawText(r, "LV",    lvlX,   HUD_H + 26, 1, {120, 200, 255});
+
+    const float y0 = HUD_H + 42;
+    char buf[24];
+    for (int i = 0; i < HISCORE_COUNT; ++i) {
+        const HiScoreEntry& e = g.hi[i];
+        Color c = (i == 0) ? colorCycle3(g.time) : Color{220, 220, 230};
+        float y = y0 + i * 16;
+        std::snprintf(buf, sizeof(buf), "%2d",   i + 1);   drawText(r, buf, rankX,  y, 1, c);
+        std::snprintf(buf, sizeof(buf), "%08d",  e.score); drawText(r, buf, scoreX, y, 1, c);
+        drawText(r, e.name[0] ? e.name : "-", nameX, y, 1, c);
+        std::snprintf(buf, sizeof(buf), "%03d",  e.level); drawText(r, buf, lvlX,   y, 1, c);
+    }
+}
+
+// "WINNER / ENTER YOUR NAME" screen: shows the score and the name being typed
+// with a blinking caret. Keystrokes are handled in the main event loop.
+void drawNameEntry(SDL_Renderer* r, const Game& g) {
+    const float cx = SCREEN_W / 2.0f;
+    char buf[24];
+    drawTextCentered(r, "WINNER", cx, HUD_H + 26, 1, colorCycle3(g.time));
+    drawTextCentered(r, "YOUR SCORE", cx, HUD_H + 58, 1, {255, 255, 255});
+    std::snprintf(buf, sizeof(buf), "%08d", g.score);
+    drawTextCentered(r, buf, cx, HUD_H + 74, 1, {255, 230, 60});
+    drawTextCentered(r, "ENTER YOUR NAME", cx, HUD_H + 110, 1, {120, 200, 255});
+
+    // Typed name centred, reserving one slot for a blinking caret.
+    const float y = HUD_H + 134;
+    const int slots = g.hs.len + 1;
+    const float startX = cx - slots * FONT_ADV / 2.0f;
+    if (g.hs.len > 0) drawText(r, g.hs.entry, startX, y, 1, {255, 255, 255});
+    if (std::fmod(g.time, 0.6f) < 0.3f) {
+        setCol(r, {255, 255, 255});
+        fillR(r, startX + g.hs.len * FONT_ADV, y + FONT_H - 1, FONT_W, 1.5f);
+    }
+}
+
 void drawOptions(SDL_Renderer* r, const Game& g) {
     useScreen(r);
     setCol(r, {0, 0, 0});
@@ -528,10 +576,25 @@ void render(SDL_Renderer* r, const Game& g) {
         return;
     }
 
+    if (g.state == NAMEENTRY) {
+        useScreen(r);
+        setCol(r, {0, 0, 0});
+        SDL_RenderClear(r);
+        drawNameEntry(r, g);
+        drawHud(r, g);
+        return;
+    }
+
     if (g.state == TITLE) {
         useScreen(r);
         setCol(r, {0, 0, 0});
         SDL_RenderClear(r);
+        // Attract loop alternates the banner with the high-score table.
+        if (g.hs.showTable) {
+            drawHiScores(r, g);
+            drawHud(r, g);
+            return;
+        }
         const float bx = (SCREEN_W - BANNER_W) / 2.0f;
         const float by = HUD_H + (GAME_H / 4.0f) - (BANNER_H / 2.0f);
         int phase = (int)(g.time / BANNER_ROT) % BANNER_PHASES;

@@ -50,3 +50,13 @@ void updatePlaying(Game& g, const Input& in, float dt);
 
 // Top-level update dispatched to the current state.
 void update(Game& g, const Input& in, float dt);
+
+// High-score table: load from disk (seeding defaults on first run), persist,
+// test whether the current score qualifies, and insert a named entry.
+void loadHiScores(Game& g);
+void saveHiScores(const Game& g);
+bool hiScoreQualifies(const Game& g);
+void insertHiScore(Game& g, const char* name);
+
+// Confirm the typed name on the NAMEENTRY screen: insert, save, return to TITLE.
+void confirmNameEntry(Game& g);

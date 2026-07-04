@@ -21,7 +21,7 @@ constexpr Color POWER_COLORS[7] = {
 };
 
 enum BonusKind  { BK_B, BK_E, BK_S };
-enum State      { TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, LUCKY, GAMEOVER };
+enum State      { TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, LUCKY, GAMEOVER, NAMEENTRY };
 enum DeathPhase { DP_NONE, DP_DANCING, DP_FALLING, DP_DEAD, DP_WAIT };
 
 struct Input  { bool left, right, up, down, jumpHeld, jumpPressed; };
@@ -99,6 +99,22 @@ struct LuckyState {
     float timer = 0;   // slide progress (phase 0) then hold countdown (phase 1)
 };
 
+// One persistent high-score row: score, player name, level reached.
+struct HiScoreEntry {
+    int  score = 0;
+    char name[NAME_MAX + 1] = {};
+    int  level = 1;
+};
+
+// High-score UI state: the name being typed on the NAMEENTRY screen, plus the
+// TITLE screen's banner/table alternation.
+struct HiScoreState {
+    char  entry[NAME_MAX + 1] = {};  // name currently being typed
+    int   len = 0;
+    bool  showTable = false;         // TITLE: showing the table vs the banner
+    float flashTimer = 0.0f;         // TITLE alternation timer
+};
+
 // ---------------------------------------------------------------------------
 // God struct: top-level game state
 // ---------------------------------------------------------------------------
@@ -124,6 +140,8 @@ struct Game {
     SBState       sb;
     LuckyState    lucky;
     GameOverState go;
+    HiScoreState  hs;
+    HiScoreEntry  hi[HISCORE_COUNT];
 
     Player p{};
     AnimSprite jackSprite;   // owned animated sprite for the living player
