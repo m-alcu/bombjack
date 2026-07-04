@@ -82,6 +82,24 @@ static int renderTest() {
     return 0;
 }
 
+// Render one level's PLAYING view to a BMP (debug tool).
+static int shot(int level, const char* out) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) return 1;
+    SDL_Window* win = SDL_CreateWindow("shot", SCREEN_W * WIN_SCALE, SCREEN_H * WIN_SCALE, 0);
+    SDL_Renderer* ren = win ? SDL_CreateRenderer(win, nullptr) : nullptr;
+    if (!ren) { SDL_Quit(); return 1; }
+    SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    buildSprites(ren); buildBackground(ren);
+    Game g; initPlatforms(g); buildJackSprite(g.jackSprite); loadHiScores(g);
+    g.startLevel = level; startGame(g); g.startAnim = 0.0f;
+    render(ren, g);
+    SDL_Surface* s = SDL_RenderReadPixels(ren, nullptr);
+    if (s) { SDL_SaveBMP(s, out); SDL_DestroySurface(s); std::printf("shot %d -> %s\n", level, out); }
+    destroySprites(); destroyBackground();
+    SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
+    return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -91,6 +109,8 @@ int main(int argc, char** argv) {
             return selfTest(i + 1 < argc ? std::atoi(argv[i + 1]) : 600);
         if (std::strcmp(argv[i], "--rendertest") == 0)
             return renderTest();
+        if (std::strcmp(argv[i], "--shot") == 0)
+            return shot(i+1 < argc ? std::atoi(argv[i+1]) : 1, i+2 < argc ? argv[i+2] : "shot.bmp");
     }
 
     if (!SDL_Init(SDL_INIT_VIDEO)) {
