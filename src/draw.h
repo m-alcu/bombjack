@@ -32,8 +32,6 @@ void drawLucky(SDL_Renderer* r, const Game& g);
 
 void drawHiScores(SDL_Renderer* r, const Game& g);
 
-void drawNameEntry(SDL_Renderer* r, const Game& g);
-
 void drawOptions(SDL_Renderer* r, const Game& g);
 
 void render(SDL_Renderer* r, const Game& g);

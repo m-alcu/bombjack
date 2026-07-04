@@ -50,6 +50,9 @@ inline constexpr AtlasRect GAMEOVER = {2, 155, GAMEOVER_W, GAMEOVER_H};
 // Hollow yellow picture-frame for the "YOU ARE LUCKY" screen.
 inline constexpr AtlasRect LUCKY_FRAME = {200, 304, 64, 64};
 
+// Rounded frame around the name being edited on the high-score screen.
+inline constexpr AtlasRect NAME_FRAME = {317, 212, 35, 19};
+
 // Boxed multiplier indicators x / 1..5 (16x16 cells).
 inline constexpr AtlasStrip MULT = {4, 192, SIZE_16PX, SIZE_16PX, 20};
 

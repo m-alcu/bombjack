@@ -128,7 +128,8 @@
       "Bash(cat hiscores.dat)",
       "Bash(awk 'NR==1{print \"top:\",$0} {s[NR]=$1} END{ok=1; for\\(i=2;i<=NR;i++\\) if\\(s[i]>s[i-1]\\) ok=0; print \\(ok?\"scores descending: OK\":\"NOT descending\"\\); print \"rows:\",NR}' hiscores.dat)",
       "Bash(awk '{s[NR]=$1} END{ok=1; for\\(i=2;i<=NR;i++\\) if\\(s[i]>s[i-1]\\) ok=0; print \\(ok?\"descending: OK\":\"NOT descending\"\\)}' hiscores.dat)",
-      "Bash(./build/bombjack --selftest 4000)"
+      "Bash(./build/bombjack --selftest 4000)",
+      "Bash(./build/bombjack --selftest 2000)"
     ],
     "additionalDirectories": [
       "/tmp",

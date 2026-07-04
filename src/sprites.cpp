@@ -37,6 +37,7 @@ Sprite g_pickCoinFrames[4];
 Sprite g_startBg[2];
 Sprite g_startText[2];
 Sprite g_luckyFrame[LUCKY_PHASES];
+Sprite g_nameFrame;
 
 SDL_Texture* g_jackTex[JF_COUNT]      = {};
 SDL_Texture* g_jackPhase[JF_COUNT][4] = {};
@@ -249,6 +250,22 @@ void buildSprites(SDL_Renderer* ren) {
         SDL_DestroySurface(base);
     }
 
+    // High-score name-edit frame, baked to a white mask so it can be tinted with
+    // the colour cycle at draw time. The transparent centre hole is preserved.
+    {
+        const AtlasRect& nf = atlas::NAME_FRAME;
+        SDL_Surface* f = SDL_CreateSurface(nf.w, nf.h, SDL_PIXELFORMAT_RGBA32);
+        SDL_Rect src{nf.x, nf.y, nf.w, nf.h};
+        SDL_BlitSurface(atlas, &src, f, nullptr);
+        for (int y = 0; y < nf.h; ++y)
+            for (int x = 0; x < nf.w; ++x) {
+                Uint8* p = (Uint8*)f->pixels + y * f->pitch + x * 4;
+                if (p[3] > 0) { p[0] = p[1] = p[2] = 255; }
+            }
+        g_nameFrame = {nf.w, nf.h, texFromSurface(ren, f)};
+        SDL_DestroySurface(f);
+    }
+
     // Transformed chasers (2 animation frames each).
     g_sprites[SP_SPHERE1] = cropR(atlas::SPHERE1);
     g_sprites[SP_SPHERE2] = cropR(atlas::SPHERE2);
@@ -453,6 +470,7 @@ void destroySprites() {
     for (Sprite& s : g_startBg)         ds(s);
     for (Sprite& s : g_startText)       ds(s);
     for (Sprite& s : g_luckyFrame)      ds(s);
+    ds(g_nameFrame);
     for (SDL_Texture*& t : g_jackTex)   dt(t);
     for (auto& row : g_jackPhase) for (SDL_Texture*& t : row) dt(t);
     for (JackVarFrame& f : g_jackDance) dv(f);

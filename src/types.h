@@ -111,6 +111,7 @@ struct HiScoreEntry {
 struct HiScoreState {
     char  entry[NAME_MAX + 1] = {};  // name currently being typed
     int   len = 0;
+    int   rank = 0;                  // NAMEENTRY: table row the new score lands on
     bool  showTable = false;         // TITLE: showing the table vs the banner
     float flashTimer = 0.0f;         // TITLE alternation timer
 };
@@ -124,6 +125,7 @@ struct Game {
     int   startLevel = 1, startLives = 3;
     int   imgStyle = 0, optSel = 0;
     bool  alwaysS = false;   // OPTIONS toggle: spawn an S bonus every level
+    bool  start100k = false; // OPTIONS toggle: start a game with 100000 points
     int   litBomb  = -1, catched = 0;
     int   phaseStart = 0, multiplier = 1;
     int   nextBonusScore = BONUS_LIMIT;

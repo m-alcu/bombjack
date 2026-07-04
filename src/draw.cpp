@@ -470,63 +470,73 @@ void drawLucky(SDL_Renderer* r, const Game& g) {
     drawTextCentered(r, "ONE MORE PLAY", x2, y2, 1, {255, 255, 255});
 }
 
-// High-score table ("BEST PLAYERS"), shown on the attract loop and after a
-// qualifying game. Matches the arcade layout: ordinal rank, score, 3-letter
-// name and "ROUND n". The top row colour-cycles like the arcade's animated line.
+// High-score table. In the attract loop it shows the stored top-ten under a
+// "BEST PLAYERS" header. During NAMEENTRY it injects the fresh score at its rank
+// row and lets the player type a name inline inside a colour-cycling frame,
+// under a "FANTASTIC SCORE! / RECORD YOUR NAME" header.
 void drawHiScores(SDL_Renderer* r, const Game& g) {
-    // Align the 'B' of "BEST PLAYERS" under the last letter of the HUD's
-    // "SIDE-ONE" (drawn at x=3): x = 3 + (len("SIDE-ONE")-1) * FONT_ADV.
-    const float titleX = 3.0f + 7 * FONT_ADV;
-    drawText(r, "BEST PLAYERS", titleX, HUD_H + 12, 1, {255, 140, 0});
+    const bool  editing = (g.state == NAMEENTRY);
+    const float cx = SCREEN_W / 2.0f;
 
-    const float rankX = 12, scoreX = 52, nameX = 116, roundX = 148;
+    if (editing) {
+        drawTextCentered(r, "FANTASTIC SCORE!", cx, HUD_H + 8,  1, {255, 140, 0});
+        drawTextCentered(r, "RECORD YOUR NAME", cx, HUD_H + 22, 1, {255, 255, 255});
+    } else {
+        // Align 'B' under the last letter of the HUD's "SIDE-ONE" (drawn at x=3).
+        drawText(r, "BEST PLAYERS", 3.0f + 7 * FONT_ADV, HUD_H + 14, 1, {255, 140, 0});
+    }
+
+    const float rankX = 8, scoreX = 44, nameX = 112, roundX = 150;
     const float numX  = roundX + 6 * FONT_ADV;   // after the "ROUND " word
-    const float y0 = HUD_H + 36;                 // whole table sits one line up
+    const float y0 = HUD_H + 40;
     const Color base = {220, 220, 230};
     char buf[24];
-    for (int i = 0; i < HISCORE_COUNT; ++i) {
-        const HiScoreEntry& e = g.hi[i];
-        // Only the top score and top round number colour-cycle (arcade look).
-        Color hot = (i == 0) ? colorCycle3(g.time) : base;
-        float y = y0 + i * 16;
-        int rk = i + 1;
+    for (int d = 0; d < HISCORE_COUNT; ++d) {
+        const bool isEdit = editing && d == g.hs.rank;
+        // During editing the pending entry is injected at its rank, pushing the
+        // rows below it down one place (the last stored entry drops off).
+        int score, level; const char* name;
+        if (isEdit)                       { score = g.score;         level = g.level;         name = g.hs.entry; }
+        else if (editing && d > g.hs.rank){ score = g.hi[d-1].score; level = g.hi[d-1].level; name = g.hi[d-1].name; }
+        else                              { score = g.hi[d].score;   level = g.hi[d].level;   name = g.hi[d].name; }
+
+        // Attract loop colour-cycles the top score/round; editing cycles the frame.
+        Color hot = (!editing && d == 0) ? colorCycle3(g.time) : base;
+        float y = y0 + d * 16;
+        int rk = d + 1;
         const char* suf = rk == 1 ? "ST" : rk == 2 ? "ND" : rk == 3 ? "RD" : "TH";
         std::snprintf(buf, sizeof(buf), "%d%s", rk, suf); drawText(r, buf, rankX,  y, 1, base);
-        std::snprintf(buf, sizeof(buf), "%d", e.score);   drawText(r, buf, scoreX, y, 1, hot);
-        drawText(r, e.name[0] ? e.name : "...", nameX, y, 1, base);
+        std::snprintf(buf, sizeof(buf), "%d", score);     drawText(r, buf, scoreX, y, 1, hot);
+
+        if (isEdit) {
+            // Colour-cycling rounded frame around the name being typed.
+            if (g_nameFrame.tex) {
+                SDL_FRect dst{nameX - 5, y - 6, (float)g_nameFrame.w, (float)g_nameFrame.h};
+                drawTexTinted(r, g_nameFrame.tex, dst, colorCycle3(g.time));
+            }
+            // Typed chars, tightened to fit the ~4-char hole, plus a blink caret.
+            const float adv = 6.0f;
+            for (int k = 0; k < g.hs.len; ++k)
+                drawChar(r, g.hs.entry[k], nameX + k * adv, y, 1, {255, 255, 255});
+            if (g.hs.len < NAME_MAX && std::fmod(g.time, 0.6f) < 0.3f) {
+                setCol(r, {255, 255, 255});
+                fillR(r, nameX + g.hs.len * adv, y + FONT_H - 1, FONT_W, 1.5f);
+            }
+        } else {
+            drawText(r, name[0] ? name : "...", nameX, y, 1, base);
+        }
+
         drawText(r, "ROUND", roundX, y, 1, base);
-        std::snprintf(buf, sizeof(buf), "%d", e.level);   drawText(r, buf, numX,   y, 1, hot);
+        std::snprintf(buf, sizeof(buf), "%d", level);     drawText(r, buf, numX, y, 1, hot);
     }
 
     // Footer "@#1984 TEHKAN LTD." (@/# are the two copyright glyphs), sitting
     // midway between the last row and the bottom, with TEHKAN colour-cycling.
     const char* footer = "@#1984 TEHKAN LTD.";
-    const float fx = SCREEN_W / 2.0f - textWidth(footer, 1) / 2.0f;
+    const float fx = cx - textWidth(footer, 1) / 2.0f;
     const float fy = HUD_H + GAME_H - 20;
     drawText(r, footer, fx, fy, 1, {200, 200, 210});
     drawText(r, "TEHKAN", fx + 7 * FONT_ADV, fy, 1, colorCycle3(g.time));  // recolour word
-}
-
-// "WINNER / ENTER YOUR NAME" screen: shows the score and the name being typed
-// with a blinking caret. Keystrokes are handled in the main event loop.
-void drawNameEntry(SDL_Renderer* r, const Game& g) {
-    const float cx = SCREEN_W / 2.0f;
-    char buf[24];
-    drawTextCentered(r, "WINNER", cx, HUD_H + 26, 1, colorCycle3(g.time));
-    drawTextCentered(r, "YOUR SCORE", cx, HUD_H + 58, 1, {255, 255, 255});
-    std::snprintf(buf, sizeof(buf), "%08d", g.score);
-    drawTextCentered(r, buf, cx, HUD_H + 74, 1, {255, 230, 60});
-    drawTextCentered(r, "ENTER YOUR NAME", cx, HUD_H + 110, 1, {120, 200, 255});
-
-    // Typed name centred, reserving one slot for a blinking caret.
-    const float y = HUD_H + 134;
-    const int slots = g.hs.len + 1;
-    const float startX = cx - slots * FONT_ADV / 2.0f;
-    if (g.hs.len > 0) drawText(r, g.hs.entry, startX, y, 1, {255, 255, 255});
-    if (std::fmod(g.time, 0.6f) < 0.3f) {
-        setCol(r, {255, 255, 255});
-        fillR(r, startX + g.hs.len * FONT_ADV, y + FONT_H - 1, FONT_W, 1.5f);
-    }
 }
 
 void drawOptions(SDL_Renderer* r, const Game& g) {
@@ -539,12 +549,13 @@ void drawOptions(SDL_Renderer* r, const Game& g) {
         "CLASSIC", "PLACES1", "PLACES2", "PLACES3", "PLACES4",
         "PLACES5", "SPACE1", "SPACE2", "NO"
     };
-    const char* labels[OPT_COUNT] = {"START LEVEL", "LIVES", "NEW IMAGES", "S BONUS"};
+    const char* labels[OPT_COUNT] = {"START LEVEL", "LIVES", "NEW IMAGES",
+                                     "S BONUS", "100K START"};
     const float rowY0 = HUD_H + 80;
     for (int i = 0; i < OPT_COUNT; ++i) {
         bool sel = (g.optSel == i);
         Color c = sel ? Color{255, 255, 255} : Color{150, 150, 170};
-        float y = rowY0 + i * 22;
+        float y = rowY0 + i * 18;
         if (sel) {
             setCol(r, Color{255, 230, 60});
             for (int k = 0; k < 7; ++k)
@@ -555,7 +566,8 @@ void drawOptions(SDL_Renderer* r, const Game& g) {
         if (i == 0)      std::snprintf(vbuf, sizeof(vbuf), "%d", g.startLevel);
         else if (i == 1) std::snprintf(vbuf, sizeof(vbuf), "%d", g.startLives);
         else if (i == 2) std::snprintf(vbuf, sizeof(vbuf), "%s", imgNames[g.imgStyle]);
-        else             std::snprintf(vbuf, sizeof(vbuf), "%s", g.alwaysS ? "ON" : "OFF");
+        else if (i == 3) std::snprintf(vbuf, sizeof(vbuf), "%s", g.alwaysS ? "ON" : "OFF");
+        else             std::snprintf(vbuf, sizeof(vbuf), "%s", g.start100k ? "ON" : "OFF");
         drawText(r, vbuf, 150, y, 1, c);
     }
 
@@ -591,7 +603,7 @@ void render(SDL_Renderer* r, const Game& g) {
         useScreen(r);
         setCol(r, {0, 0, 0});
         SDL_RenderClear(r);
-        drawNameEntry(r, g);
+        drawHiScores(r, g);   // table with inline name editing
         drawHud(r, g);
         return;
     }

@@ -43,6 +43,7 @@ extern Sprite g_startText[2];
 // outward from the centre; drawLucky cycles them over time.
 constexpr int LUCKY_PHASES = 8;
 extern Sprite g_luckyFrame[LUCKY_PHASES];
+extern Sprite g_nameFrame;   // white mask of the high-score name-edit frame
 
 // Jack living / death / win frames.
 enum JackFrame {

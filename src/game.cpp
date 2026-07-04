@@ -148,12 +148,13 @@ void optionAdjust(Game& g, int d) {
         case 1: g.startLives = std::clamp(g.startLives + d, 1, OPT_MAX_LIVES);          break;
         case 2: g.imgStyle   = (g.imgStyle + d + OPT_IMG_STYLES) % OPT_IMG_STYLES;      break;
         case 3: g.alwaysS    = !g.alwaysS;                                              break;
+        case 4: g.start100k  = !g.start100k;                                            break;
     }
 }
 
 void startGame(Game& g) {
     audio::stopTag("title");   // leave the title-screen music behind
-    g.score     = 0;
+    g.score     = g.start100k ? 100000 : 0;
     g.lives     = g.startLives;
     g.level     = g.startLevel;
     g.state     = PLAYING;
@@ -796,9 +797,13 @@ void update(Game& g, const Input& in, float dt) {
                 if (g.go.timer <= 0.0f) {
                     audio::stopTag("gameover");
                     if (hiScoreQualifies(g)) {
-                        // Made the table: type a name (with the entry jingle).
+                        // Made the table: type a name inline at its rank row.
                         g.hs.entry[0] = '\0';
                         g.hs.len      = 0;
+                        g.hs.rank     = 0;
+                        while (g.hs.rank < HISCORE_COUNT &&
+                               g.score <= g.hi[g.hs.rank].score)
+                            g.hs.rank++;
                         audio::play(audio::SND_NAME_ENTRY, "nameentry");
                         g.state = NAMEENTRY;
                     } else {

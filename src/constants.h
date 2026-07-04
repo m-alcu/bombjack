@@ -149,11 +149,11 @@ constexpr int BG_W = 224, BG_H = 224;
 constexpr int GRID_BG_COUNT = 7;
 
 // OPTIONS screen rows and value bounds
-constexpr int OPT_COUNT      = 4;
+constexpr int OPT_COUNT      = 5;
 constexpr int OPT_MAX_LIVES  = 9;
 constexpr int OPT_IMG_STYLES = GRID_BG_COUNT + 2;  // CLASSIC + 7 grids + NO
 
 // High-score table (name entry + display), mirroring the Godot game.
 constexpr int   HISCORE_COUNT    = 10;
-constexpr int   NAME_MAX         = 3;     // classic arcade 3-letter initials
+constexpr int   NAME_MAX         = 4;     // fits the name-frame's 4-char hole
 constexpr float TITLE_FLASH_TIME = 5.0f;  // title alternates banner/table
