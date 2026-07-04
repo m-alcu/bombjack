@@ -514,13 +514,13 @@ void drawHiScores(SDL_Renderer* r, const Game& g) {
                 SDL_FRect dst{nameX - 5, y - 6, (float)g_nameFrame.w, (float)g_nameFrame.h};
                 drawTexTinted(r, g_nameFrame.tex, dst, colorCycle3(g.time));
             }
-            // Typed chars, tightened to fit the ~4-char hole, plus a blink caret.
-            const float adv = 6.0f;
+            // Typed chars at the normal font advance (1px gap, like the table),
+            // plus a blinking caret in the next slot.
             for (int k = 0; k < g.hs.len; ++k)
-                drawChar(r, g.hs.entry[k], nameX + k * adv, y, 1, {255, 255, 255});
+                drawChar(r, g.hs.entry[k], nameX + k * FONT_ADV, y, 1, {255, 255, 255});
             if (g.hs.len < NAME_MAX && std::fmod(g.time, 0.6f) < 0.3f) {
                 setCol(r, {255, 255, 255});
-                fillR(r, nameX + g.hs.len * adv, y + FONT_H - 1, FONT_W, 1.5f);
+                fillR(r, nameX + g.hs.len * FONT_ADV, y + FONT_H - 1, FONT_W, 1.5f);
             }
         } else {
             drawText(r, name[0] ? name : "...", nameX, y, 1, base);
