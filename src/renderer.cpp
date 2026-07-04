@@ -24,6 +24,8 @@ void buildFont(SDL_Renderer* ren, SDL_Surface* atlas) {
     for (int i = 0; i < 10; ++i) add('0' + i, FONT_X0 + FONT_DX * i, FONT_DIGIT_Y);
     add('\'', 169, FONT_DIGIT_Y); add('!', 180, FONT_DIGIT_Y); add('.', 190, FONT_DIGIT_Y);
     add('-',  204, FONT_DIGIT_Y); add('(', 215, FONT_DIGIT_Y); add(')', 224, FONT_DIGIT_Y);
+    // Copyright pair for the high-score footer: '@' = ©, '#' = the second mark.
+    add('@', 125, 224); add('#', 137, 224);
 }
 
 void setCol(SDL_Renderer* r, Color c, Uint8 a) {

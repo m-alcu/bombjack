@@ -172,35 +172,22 @@ void startGame(Game& g) {
 #endif
 static const char* kHiScorePath = ASSET_ROOT "/hiscores.dat";
 
-// Names the Godot reference seeds random entries from (Menu.gd scoreName).
-static const char* const kSeedNames[] = {
-    "ROBERT", "OLIVIER", "JEAN", "PAUL", "NICOLAS", "PIERRE",
-    "EMMANUEL", "LAURENT", "DIDIER", "ANDRE", "FRANCOIS", "DAVID",
-};
-
 static void setEntryName(HiScoreEntry& e, const char* name) {
     std::strncpy(e.name, name, NAME_MAX);
     e.name[NAME_MAX] = '\0';
 }
 
-// Mirror Godot createOrLoadScore()'s seed: a fixed unbeatable top entry, then
-// nine randomized rows with strictly descending scores.
+// Default table matching the arcade "BEST PLAYERS" screen: ten 100000 / ROUND 1
+// entries with the classic initials (10th place left as "...").
 static void seedDefaultHiScores(Game& g) {
-    g.hi[0].score = 20010960;
-    g.hi[0].level = 255;
-    setEntryName(g.hi[0], "BONDAVALLI");
-    int maxi = 100000;
-    for (int i = 1; i < HISCORE_COUNT; ++i) {
-        int score = (int)(g.rng() % (unsigned)maxi) + 2000;
-        g.hi[i].score = score;
-        g.hi[i].level = (int)(g.rng() % 12) + 5;
-        setEntryName(g.hi[i], kSeedNames[g.rng() % (sizeof(kSeedNames) / sizeof(kSeedNames[0]))]);
-        maxi = score;   // bias toward smaller values (Godot's own createOrLoadScore)
+    static const char* const kNames[HISCORE_COUNT] = {
+        "T.T", "E.E", "H.H", "K.K", "A.A", "N.N", "L.L", "T.T", "D.D", "...",
+    };
+    for (int i = 0; i < HISCORE_COUNT; ++i) {
+        g.hi[i].score = 100000;
+        g.hi[i].level = 1;
+        setEntryName(g.hi[i], kNames[i]);
     }
-    // Godot's +2000 can overshoot `maxi`, so the raw seed isn't strictly sorted;
-    // sort descending to keep the table (and insert/qualify) well-ordered.
-    std::sort(std::begin(g.hi), std::end(g.hi),
-              [](const HiScoreEntry& a, const HiScoreEntry& b) { return a.score > b.score; });
 }
 
 void saveHiScores(const Game& g) {

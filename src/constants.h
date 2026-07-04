@@ -155,5 +155,5 @@ constexpr int OPT_IMG_STYLES = GRID_BG_COUNT + 2;  // CLASSIC + 7 grids + NO
 
 // High-score table (name entry + display), mirroring the Godot game.
 constexpr int   HISCORE_COUNT    = 10;
-constexpr int   NAME_MAX         = 10;    // fits "BONDAVALLI"
+constexpr int   NAME_MAX         = 3;     // classic arcade 3-letter initials
 constexpr float TITLE_FLASH_TIME = 5.0f;  // title alternates banner/table

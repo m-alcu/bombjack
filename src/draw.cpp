@@ -471,29 +471,40 @@ void drawLucky(SDL_Renderer* r, const Game& g) {
 }
 
 // High-score table ("BEST PLAYERS"), shown on the attract loop and after a
-// qualifying game. Columns are placed at fixed x so the fixed-width score/level
-// stay aligned; the top row colour-cycles like the Godot menu's animated line.
+// qualifying game. Matches the arcade layout: ordinal rank, score, 3-letter
+// name and "ROUND n". The top row colour-cycles like the arcade's animated line.
 void drawHiScores(SDL_Renderer* r, const Game& g) {
-    const float cx = SCREEN_W / 2.0f;
-    drawTextCentered(r, "BEST PLAYERS", cx, HUD_H + 8, 1, {255, 230, 60});
+    // Align the 'B' of "BEST PLAYERS" under the last letter of the HUD's
+    // "SIDE-ONE" (drawn at x=3): x = 3 + (len("SIDE-ONE")-1) * FONT_ADV.
+    const float titleX = 3.0f + 7 * FONT_ADV;
+    drawText(r, "BEST PLAYERS", titleX, HUD_H + 12, 1, {255, 140, 0});
 
-    const float rankX = 10, scoreX = 34, nameX = 104, lvlX = 190;
-    drawText(r, "RK",    rankX,  HUD_H + 26, 1, {120, 200, 255});
-    drawText(r, "SCORE", scoreX, HUD_H + 26, 1, {120, 200, 255});
-    drawText(r, "NAME",  nameX,  HUD_H + 26, 1, {120, 200, 255});
-    drawText(r, "LV",    lvlX,   HUD_H + 26, 1, {120, 200, 255});
-
-    const float y0 = HUD_H + 42;
+    const float rankX = 12, scoreX = 52, nameX = 116, roundX = 148;
+    const float numX  = roundX + 6 * FONT_ADV;   // after the "ROUND " word
+    const float y0 = HUD_H + 36;                 // whole table sits one line up
+    const Color base = {220, 220, 230};
     char buf[24];
     for (int i = 0; i < HISCORE_COUNT; ++i) {
         const HiScoreEntry& e = g.hi[i];
-        Color c = (i == 0) ? colorCycle3(g.time) : Color{220, 220, 230};
+        // Only the top score and top round number colour-cycle (arcade look).
+        Color hot = (i == 0) ? colorCycle3(g.time) : base;
         float y = y0 + i * 16;
-        std::snprintf(buf, sizeof(buf), "%2d",   i + 1);   drawText(r, buf, rankX,  y, 1, c);
-        std::snprintf(buf, sizeof(buf), "%08d",  e.score); drawText(r, buf, scoreX, y, 1, c);
-        drawText(r, e.name[0] ? e.name : "-", nameX, y, 1, c);
-        std::snprintf(buf, sizeof(buf), "%03d",  e.level); drawText(r, buf, lvlX,   y, 1, c);
+        int rk = i + 1;
+        const char* suf = rk == 1 ? "ST" : rk == 2 ? "ND" : rk == 3 ? "RD" : "TH";
+        std::snprintf(buf, sizeof(buf), "%d%s", rk, suf); drawText(r, buf, rankX,  y, 1, base);
+        std::snprintf(buf, sizeof(buf), "%d", e.score);   drawText(r, buf, scoreX, y, 1, hot);
+        drawText(r, e.name[0] ? e.name : "...", nameX, y, 1, base);
+        drawText(r, "ROUND", roundX, y, 1, base);
+        std::snprintf(buf, sizeof(buf), "%d", e.level);   drawText(r, buf, numX,   y, 1, hot);
     }
+
+    // Footer "@#1984 TEHKAN LTD." (@/# are the two copyright glyphs), sitting
+    // midway between the last row and the bottom, with TEHKAN colour-cycling.
+    const char* footer = "@#1984 TEHKAN LTD.";
+    const float fx = SCREEN_W / 2.0f - textWidth(footer, 1) / 2.0f;
+    const float fy = HUD_H + GAME_H - 20;
+    drawText(r, footer, fx, fy, 1, {200, 200, 210});
+    drawText(r, "TEHKAN", fx + 7 * FONT_ADV, fy, 1, colorCycle3(g.time));  // recolour word
 }
 
 // "WINNER / ENTER YOUR NAME" screen: shows the score and the name being typed
