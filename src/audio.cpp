@@ -56,6 +56,7 @@ const char* kFile[SND_COUNT] = {
     "mummy_fall.wav",
     "bonus.wav",
     "take_bonus.wav",
+    "04 Got a Special Coin.wav",
     "03_Ringo_no_Mori_no_Koneko_Tachi_BGM_1.mp3",
 };
 

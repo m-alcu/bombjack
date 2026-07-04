@@ -530,6 +530,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                     g.lives++;
                     audio::stopTag("music");
                     audio::stopTag("power");
+                    audio::play(audio::SND_GOT_SPECIAL, "special_coin");
                     g.state       = LUCKY;   // "YOU ARE LUCKY / ONE MORE PLAY" screen
                     g.lucky.phase = 0;
                     g.lucky.timer = 0.0f;
@@ -667,20 +668,17 @@ void update(Game& g, const Input& in, float dt) {
             }
             break;
         case LUCKY:
+            g.lucky.timer += dt;
             if (g.lucky.phase == 0) {
-                // Text glides in from the corners; once it settles, hold a beat.
-                g.lucky.timer += dt;
-                if (g.lucky.timer >= LUCKY_SLIDE_TIME) {
-                    g.lucky.phase = 1;
-                    g.lucky.timer = LUCKY_HOLD_TIME;
-                }
-            } else {
-                g.lucky.timer -= dt;
-                if (g.lucky.timer <= 0.0f) {
-                    g.level++;
-                    startRound(g);
-                    g.state = PLAYING;
-                }
+                // Text glides in from the corners; once it settles, hold.
+                if (g.lucky.timer >= LUCKY_SLIDE_TIME) g.lucky.phase = 1;
+            } else if (g.lucky.timer >= LUCKY_HOLD_TIME &&
+                       audio::tagCount("special_coin") == 0) {
+                // Stay until the "special coin" jingle finishes (the floor keeps
+                // a muted build from flashing the screen away instantly).
+                g.level++;
+                startRound(g);
+                g.state = PLAYING;
             }
             break;
         case GAMEOVER: {
