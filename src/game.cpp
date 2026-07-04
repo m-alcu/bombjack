@@ -454,6 +454,19 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             break;
         }
     }
+
+    // Vertical girders act as walls: block horizontal movement through their
+    // sides. The eps keeps standing on top / passing just under from counting
+    // as a side hit. Horizontal platforms stay pass-through (Bomb Jack floors).
+    const float wallEps = 2.0f;
+    for (const SDL_FRect& pl : g.platforms) {
+        if (pl.h <= pl.w) continue;                                   // girders only
+        if (p.y + PH <= pl.y + wallEps || p.y >= pl.y + pl.h - wallEps) continue;
+        if (p.x + PW <= pl.x || p.x >= pl.x + pl.w) continue;         // no overlap
+        if (p.vx > 0)      { p.x = pl.x - PW;     orbStep = true; }   // hit left face
+        else if (p.vx < 0) { p.x = pl.x + pl.w;   orbStep = true; }   // hit right face
+    }
+
     if (!oldOnGround && p.onGround) orbStep = true;
     if (g.orb.active && orbStep) g.orb.family = (g.orb.family + 1) % 7;
 
