@@ -27,8 +27,6 @@ Sprite g_bonusS[4];
 Sprite g_bonusTaken[6];
 SDL_Texture* g_multBorder[6] = {};
 SDL_Texture* g_multSymbol[6] = {};
-Sprite g_barRight[BAR_STEPS];
-Sprite g_barLeft[BAR_STEPS];
 Sprite g_coinFrames[7];
 Sprite g_bombFrames[7];
 Sprite g_orbCycle[7][4];
@@ -166,8 +164,8 @@ void buildSprites(SDL_Renderer* ren) {
                 bool isGreen = s[3] > 0 && s[2] == 0 && s[1] == 255; // (66,255,0)
                 bool isWhite = s[3] > 0 && s[0] == 255 && s[2] == 255;
                 bool isBlack = s[3] > 0 && !(s[0] | s[1] | s[2]);
-                // Border layer: stored at lum=128 to match the innermost bar brightness
-                b[0] = b[1] = b[2] = 200; b[3] = isGreen ? 255 : 0;
+                // Border layer: full white so the tint shows the exact HUD colour
+                b[0] = b[1] = b[2] = 255; b[3] = isGreen ? 255 : 0;
                 // Symbol layer: black box + white symbol, border area transparent
                 if (isBlack)       { m[0]=m[1]=m[2]=0;   m[3]=255; }
                 else if (isWhite)  { m[0]=m[1]=m[2]=255; m[3]=255; }
@@ -402,33 +400,6 @@ void buildSprites(SDL_Renderer* ren) {
         SDL_DestroySurface(f);
     }
 
-    // Power bar segments: normalized to grayscale so SetTextureColorMod matches g_multBorder.
-    // Pixels are (R,255,0) where R encodes brightness (66=dim → 255=bright). Black → transparent.
-    for (int i = 0; i < BAR_STEPS; ++i) {
-        for (int side = 0; side < 2; ++side) {
-            const AtlasRect& seg = side == 0 ? atlas::BAR_RIGHT[i] : atlas::BAR_LEFT[i];
-            int bw = seg.w;
-            SDL_Surface* f = SDL_CreateSurface(bw, 8, SDL_PIXELFORMAT_RGBA32);
-            SDL_Rect src{seg.x, seg.y, bw, 8};
-            SDL_BlitSurface(atlas, &src, f, nullptr);
-            for (int y = 0; y < 8; ++y)
-                for (int x = 0; x < bw; ++x) {
-                    Uint8* p = (Uint8*)f->pixels + y * f->pitch + x * 4;
-                    bool black = p[3] > 0 && !(p[0] | p[1] | p[2]);
-                    if (black || p[3] == 0) { p[0]=p[1]=p[2]=p[3]=0; }
-                    else {
-                        // Remap R [66..255] → [128..255] so innermost bar matches border lum=128
-                        Uint8 lum = (Uint8)(200 + (int)(p[0] - 66) * 55 / 189);
-                        p[0]=p[1]=p[2]=lum; p[3]=255;
-                    }
-                }
-            Sprite sp{bw, 8, texFromSurface(ren, f)};
-            SDL_DestroySurface(f);
-            if (side == 0) g_barRight[i] = sp;
-            else           g_barLeft[i]  = sp;
-        }
-    }
-
     SDL_DestroySurface(atlas);
     stbi_image_free(spx);
 }
@@ -460,8 +431,6 @@ void destroySprites() {
     for (Sprite& s : g_bonusTaken)   ds(s);
     for (SDL_Texture*& t : g_multBorder) dt(t);
     for (SDL_Texture*& t : g_multSymbol) dt(t);
-    for (Sprite& s : g_barRight) ds(s);
-    for (Sprite& s : g_barLeft)  ds(s);
     for (Sprite& s : g_coinFrames)   ds(s);
     for (Sprite& s : g_bombFrames)   ds(s);
     for (auto& row : g_orbCycle) for (Sprite& s : row) ds(s);

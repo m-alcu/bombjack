@@ -11,6 +11,12 @@
 // the TEsound finished-callback the Lua original attaches to that sound.
 static void resumeMusic() { audio::resumeTag("music"); }
 
+// Coin bounce: the arcade plays it on one channel, so a new bounce cuts the last.
+static void bounceSound(float gain) {
+    audio::stopTag("coin_bounce");
+    audio::play(audio::SND_BONUS, "coin_bounce", false, nullptr, gain);
+}
+
 // In-game BGM comes from the round table's music index (0..2). Index→track
 // follows the Godot reference (rounds 1, 2, 3 → BGM 1, BGM 3, BGM 2); the
 // mapping to the arcade's own tunes has not been verified by ear.
@@ -139,7 +145,6 @@ void startRound(Game& g) {
     g.explosions.clear();
     g.coinPickups.clear();
     g.bonusTakens.clear();
-    g.phaseStart     = g.score;
     g.multiplier     = 1;
     g.bonus.active   = false;
     g.nextBonusScore = (g.score / BONUS_LIMIT + 1) * BONUS_LIMIT;
@@ -314,6 +319,9 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 if (g.death.frame == 0) {
                     g.death.loops++;
                     if (g.death.loops >= DEATH_DANCE_LOOPS) {
+                        // Arcade: the "touched" tune is cut and the fall sound starts.
+                        audio::stopTag("touched");
+                        audio::play(audio::SND_DEATH_FALL);
                         g.death.phase = DP_FALLING;
                         g.death.frame = 0;
                         g.death.anim  = 0.0f;
@@ -415,7 +423,6 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     if (in.jumpPressed && p.crouch <= 0.0f) {
         if (p.onGround) {
             p.crouch = JUMP_CROUCH;
-            audio::play(audio::SND_JUMP);
         } else {
             p.vy = 0;
         }
@@ -426,6 +433,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             p.crouch   = 0.0f;
             p.vy       = JUMP_VEL;
             p.onGround = false;
+            audio::play(audio::SND_JUMP);   // arcade sounds the jump at take-off
         }
     }
 
@@ -478,6 +486,8 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     }
 
     if (!oldOnGround && p.onGround) orbStep = true;
+    // Walking off a ledge sounds like a jump take-off on the arcade (command 0x11).
+    if (oldOnGround && !p.onGround && p.vy >= 0.0f) audio::play(audio::SND_JUMP);
     if (g.orb.active && orbStep) g.orb.family = (g.orb.family + 1) % 7;
 
     // Footstep loop while walking on the ground (one at a time).
@@ -499,20 +509,22 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             const bool wasLit  = (i == g.litBomb);
             const bool relight = (g.litBomb < 0) || wasLit;
             int gain;
+            // Arcade: the power counter does not charge while the Power ball is
+            // on screen; a lit bomb charges it twice as much as a plain one.
+            const float charge = g.orb.active ? 0.0f : (wasLit ? 1.0f : 0.5f);
+            g.powerMeter += charge;
             if (wasLit) {
                 g.catched++;
                 gain = 200;
-                g.powerMeter += 1.0f;
             } else {
                 gain = 100;
-                g.powerMeter += 0.5f;
             }
             if (relight) g.litBomb = nextLitBomb(g, i + 1);
             gain *= g.multiplier;
             g.score += gain;
             g.popups.push_back({b.x, b.y - 6, 0.0f, gain});
-            if (!g.orb.active && g.freezeTimer <= 0 && g.powerMeter >= POWER_NEEDED) {
-                g.powerMeter  -= POWER_NEEDED;
+            if (!g.orb.active && g.powerMeter >= POWER_NEEDED) {
+                g.powerMeter   = 0.0f;   // arcade resets the counter when the ball appears
                 g.orb.active   = true;
                 g.orb.x        = LOGW / 2.0f;
                 g.orb.y        = LOGH / 2.0f - 16.0f;
@@ -587,8 +599,10 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             g.orb.active  = false;
             g.freezeTimer = FREEZE_TIME;
             g.killCount   = 0;
+            // The power tune lasts exactly the freeze; the music resumes when the
+            // freeze ends (below), as on the arcade.
             audio::stopTag("power");
-            audio::play(audio::SND_GOT_POWER, "power", /*loop=*/false, resumeMusic);
+            audio::play(audio::SND_GOT_POWER, "power");
             int idx = (g.orb.family % (int)std::size(POWER_POINTS) +
                        (int)std::size(POWER_POINTS)) % (int)std::size(POWER_POINTS);
             g.freezeColor = POWER_COLORS[idx];
@@ -617,8 +631,8 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         const float lo = g.bonus.platX + BONUS_W * 0.5f;
         const float hi = g.bonus.platX + g.bonus.platW - BONUS_W * 0.5f;
         const float bounceGain = g.bonus.kind == BK_S ? 0.5f : 1.0f;  // S bonus quieter
-        if (g.bonus.x < lo) { g.bonus.x = lo; g.bonus.vx =  std::fabs(g.bonus.vx); audio::play(audio::SND_BONUS, nullptr, false, nullptr, bounceGain); }
-        if (g.bonus.x > hi) { g.bonus.x = hi; g.bonus.vx = -std::fabs(g.bonus.vx); audio::play(audio::SND_BONUS, nullptr, false, nullptr, bounceGain); }
+        if (g.bonus.x < lo) { g.bonus.x = lo; g.bonus.vx =  std::fabs(g.bonus.vx); bounceSound(bounceGain); }
+        if (g.bonus.x > hi) { g.bonus.x = hi; g.bonus.vx = -std::fabs(g.bonus.vx); bounceSound(bounceGain); }
 
         if (g.bonus.x > p.x - BONUS_W * 0.5f && g.bonus.x < p.x + PW + BONUS_W * 0.5f &&
             g.bonus.y > p.y - BONUS_H * 0.5f && g.bonus.y < p.y + PH + BONUS_H * 0.5f) {
@@ -680,7 +694,13 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     }
 
     const bool frozen = g.freezeTimer > 0.0f;
-    if (frozen) g.freezeTimer -= dt;
+    if (frozen) {
+        g.freezeTimer -= dt;
+        if (g.freezeTimer <= 0.0f && !g.orb.active) {
+            audio::stopTag("power");
+            resumeMusic();
+        }
+    }
 
     // Mummy drop-in schedule.
     if (!frozen) {
@@ -730,7 +750,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             g.death.timer  = 0.0f;
             audio::stopTag("music");
             audio::stopTag("power");
-            audio::play(audio::SND_TOUCHED);
+            audio::play(audio::SND_TOUCHED, "touched");
             p.invuln   = 0.0f;
             p.onGround = false;
             p.vx       = 0.0f;

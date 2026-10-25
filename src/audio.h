@@ -28,7 +28,7 @@ enum Sid {
     SND_KILL_ENEMY,          // kill_ennemy.wav — collect a frozen enemy
     SND_MUMMY_APPEAR,        // mummy_appear.wav
     SND_MUMMY_FALL,          // mummy_fall.wav
-    SND_BONUS,               // bonus.wav — B/E/S coin bounces
+    SND_BONUS,               // coin_bounce.wav — B/E/S coin bounces (arcade cmd 0x1D)
     SND_TAKE_BONUS,          // take_bonus.wav — B/E/S coin collected
     SND_GOT_SPECIAL,         // 04 Got a Special Coin.wav — S-bonus "lucky" screen
     SND_MUSIC,               // 03_Ringo..._BGM_1.mp3 — in-game music, levels %3==1
@@ -36,6 +36,9 @@ enum Sid {
     SND_MUSIC_3,             // 10_Lady_Madonna_BGM3.mp3 — in-game music, levels %3==2
     SND_TITLE,               // 01 Title.wav — title-screen music loop
     SND_NAME_ENTRY,          // 13_Name_Entry_1.mp3 — high-score name-entry screen
+    SND_MUMMY_LAND,          // mummy_land.wav — mummy lands on a platform (arcade cmd 0x17)
+    SND_MUMMY_TRANSFORM,     // mummy_transform.wav — mummy hits the floor and transforms (0x2D)
+    SND_DEATH_FALL,          // jack_death_fall.wav — Jack falls after being hit (0x14)
     SND_COUNT
 };
 

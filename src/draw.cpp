@@ -8,6 +8,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
     const float dw = BOMB_HALF_W * 2.0f;
@@ -264,80 +265,73 @@ void drawBackground(SDL_Renderer* r, int screen, int imgStyle) {
     }
 }
 
-// 16-hue palette for the multiplier / power-bar HUD: the 8 base arcade hues with
-// a midpoint inserted between each adjacent pair (wrapping) for a smooth fade.
-static const std::array<Color, 16>& multPalette() {
-    static const std::array<Color, 16> pal = [] {
-        static constexpr Color base[8] = {
-            {255, 60, 60}, {255,160,  0}, {255,235,  0}, { 60,255, 60},
-            {  0,220,255}, { 80,100,255}, {220, 60,255}, {255, 60,160},
-        };
-        std::array<Color, 16> p{};
-        for (int i = 0; i < 8; ++i) {
-            p[i * 2]     = base[i];
-            p[i * 2 + 1] = lerp(base[i], base[(i + 1) % 8], 0.5f);
-        }
-        return p;
-    }();
-    return pal;
+// Top-HUD colour cycling, measured from the arcade in MAME. The hardware rotates
+// palette 14 (multiplier box + power bar) and palette 15 ("SIDE-ONE") one entry
+// every 3 frames through these cyclic tables. While the Power ball is on screen
+// and during the freeze that follows, palette 14 cycles HUD_ROT_POWER instead.
+static constexpr Color HUD_ROT_BOX[42] = {
+    {  0,136,255}, {  0,102,255}, {  0, 68,255}, {  0, 34,255}, {  0,  0,255}, { 34,  0,255},
+    { 68,  0,255}, {102,  0,255}, {136,  0,255}, {170,  0,255}, {204,  0,255}, {255,  0,255},
+    {255,  0,204}, {255,  0,170}, {255,  0,136}, {255,  0,102}, {255,  0, 68}, {255,  0, 34},
+    {255,  0,  0}, {255, 34,  0}, {255, 68,  0}, {255,102,  0}, {255,136,  0}, {255,170,  0},
+    {255,204,  0}, {255,255,  0}, {204,255,  0}, {170,255,  0}, {136,255,  0}, {102,255,  0},
+    { 68,255,  0}, { 34,255,  0}, {  0,255,  0}, {  0,255, 34}, {  0,255, 68}, {  0,255,102},
+    {  0,255,136}, {  0,255,170}, {  0,255,204}, {  0,255,255}, {  0,204,255}, {  0,170,255},
+};
+static constexpr Color HUD_ROT_SIDE[35] = {
+    {255,255,102}, {255,255,136}, {255,255,170}, {255,255,204}, {255,255,255}, {204,204,255},
+    {170,170,255}, {136,136,255}, {102,102,255}, { 68, 68,255}, { 34, 34,255}, {  0,  0,255},
+    { 34,  0,255}, { 68,  0,255}, {102,  0,255}, {136,  0,255}, {170,  0,255}, {204,  0,255},
+    {255,  0,255}, {255,  0,204}, {255,  0,170}, {255,  0,136}, {255,  0,102}, {255,  0, 68},
+    {255,  0, 34}, {255,  0,  0}, {255, 34,  0}, {255, 68,  0}, {255,102,  0}, {255,136,  0},
+    {255,170,  0}, {255,204,  0}, {255,255,  0}, {255,255, 34}, {255,255, 68},
+};
+static constexpr Color HUD_ROT_POWER[8] = {
+    {255,  0,  0}, {255, 34, 34}, {255, 68, 68}, {255,102,102},
+    {255,136,136}, {255,170,170}, {255,204,204}, {255,238,238},
+};
+constexpr int HUD_ROT_FRAMES = 3;   // arcade frames per rotation step
+
+// Current rotation step, and entry `step + offset` of a cyclic table.
+static int hudRotStep(const Game& g) { return (int)(g.time * ARCADE_HZ / HUD_ROT_FRAMES); }
+template <int N>
+static Color hudRot(const Color (&table)[N], int step, int offset) {
+    return table[((step + offset) % N + N) % N];
 }
 
-// Rotating-colour multiplier indicator: "x" cell plus the current 1..5 cell.
-// Border hue rotates; the symbol trails half a cycle behind. While frozen, the
-// border shimmers in the freeze colour instead.
-static void drawMultiplier(SDL_Renderer* r, const Game& g) {
+// Multiplier box (screen x 92..131, y 0..15) and power bar, as the arcade draws
+// them: the box frame shows entry s of the rotating table and the glyphs entry
+// s-6; the power bar grows outward from both box sides 2 px per 2 power units
+// (20 = full), each 4 px band k showing entry s-1-k, so colour ripples outward.
+static void drawMultiplierAndPower(SDL_Renderer* r, const Game& g) {
+    const int  s       = hudRotStep(g);
+    const bool powerUp = g.orb.active || g.freezeTimer > 0.0f;   // red cycle, full bar
+    auto rot = [&](int offset) {
+        return powerUp ? hudRot(HUD_ROT_POWER, s, offset) : hudRot(HUD_ROT_BOX, s, offset);
+    };
+
+    const int units = std::clamp((int)(g.powerMeter * 2.0f + 0.001f), 0, 20);  // arcade 0..20
+    const int barW  = powerUp ? 20 : 2 * (units / 2);
+    for (int d = 0; d < barW; d += 4) {
+        const float w = (float)std::min(4, barW - d);
+        setCol(r, rot(-1 - d / 4));
+        fillR(r, 92.0f - d - w, 0, w, 16);
+        fillR(r, 132.0f + d,    0, w, 16);
+    }
+
+    const Color frameC = rot(0);
+    setCol(r, frameC);
+    fillR(r, 92,  0, 4, 16);
+    fillR(r, 128, 0, 4, 16);
     if (!g_multBorder[0] || !g_multSymbol[0]) return;
-    constexpr int N = 16;
-    const auto& pal = multPalette();
-    int bPhase = (int)(g.time / 0.1f) % N;
-    int sPhase = (bPhase + N / 2) % N;
-    Color symbolC = pal[sPhase];
-    Color borderC = g.freezeTimer > 0.0f
-        ? scale(g.freezeColor, FREEZE_BRIGHT[(int)(g.time / 0.1f) & 3])
-        : pal[bPhase];
-    int m = std::clamp(g.multiplier, 1, 5);
+    const Color glyphC = rot(-6);
+    const int m = std::clamp(g.multiplier, 1, 5);
     auto cell = [&](int idx, SDL_FRect dst) {
-        drawTexTinted(r, g_multSymbol[idx], dst, symbolC);
-        drawTexTinted(r, g_multBorder[idx], dst, borderC);
+        drawTexTinted(r, g_multSymbol[idx], dst, glyphC);
+        drawTexTinted(r, g_multBorder[idx], dst, frameC);
     };
     cell(0, {96,  0, 16, 16});
     cell(m, {112, 0, 16, 16});
-}
-
-// Power-meter side bars: three concentric groups, each one step further from the
-// centre and lagging the rotating hue by one palette index → an outward wave.
-static void drawPowerBars(SDL_Renderer* r, const Game& g) {
-    if (!g_barRight[0].tex || !g_barLeft[0].tex) return;
-    int step = (g.freezeTimer > 0.0f)
-        ? BAR_STEPS
-        : std::clamp((int)(g.powerMeter * BAR_STEPS / POWER_NEEDED), 0, BAR_STEPS);
-    if (step <= 0) return;
-
-    constexpr int N = 16;
-    const auto& pal = multPalette();
-    int bPhase   = (int)(g.time / 0.1f) % N;
-    int freezePh = (int)(g.time / 0.1f) & 3;
-
-    struct Group { int start, count; float margin; };
-    static constexpr Group GROUPS[3] = {{0,3,0}, {3,4,8}, {7,4,16}};
-    for (int gi = 0; gi < 3; ++gi) {
-        const Group& grp = GROUPS[gi];
-        if (step <= grp.start) continue;
-        Color barC = g.freezeTimer > 0.0f
-            ? scale(g.freezeColor, FREEZE_BRIGHT[(freezePh - gi - 1 + 4) & 3])
-            : pal[(bPhase - (gi + 1) + N) % N];
-        int idx = std::clamp(step - 1, grp.start, grp.start + grp.count - 1);
-
-        float bwR = (float)g_barRight[idx].w;
-        float rx  = 128.0f + grp.margin;
-        drawTexTinted(r, g_barRight[idx].tex, {rx, 0, bwR, 8}, barC);
-        drawTexTinted(r, g_barRight[idx].tex, {rx, 8, bwR, 8}, barC);
-
-        float bwL = (float)g_barLeft[idx].w;
-        float lx  = 96.0f - grp.margin - bwL;
-        drawTexTinted(r, g_barLeft[idx].tex, {lx, 0, bwL, 8}, barC);
-        drawTexTinted(r, g_barLeft[idx].tex, {lx, 8, bwL, 8}, barC);
-    }
 }
 
 void drawHud(SDL_Renderer* r, const Game& g) {
@@ -346,14 +340,13 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     fillR(r, 0, 0, SCREEN_W, HUD_H);
     fillR(r, 0, HUD_H + GAME_H, SCREEN_W, HUD_H);
 
-    const float sideX = 3.0f;
-    drawText(r, "SIDE-ONE", sideX, 1, 1, {255, 230, 60});
-    std::snprintf(buf, sizeof(buf), "%d", g.score - g.phaseStart);
-    const float sideRight = sideX + textWidth("SIDE-ONE", 1);
-    drawText(r, buf, sideRight - textWidth(buf, 1), 9, 1, {255, 255, 255});
+    // Arcade layout: "SIDE-ONE" in 8 px character cells 1..8, the total score
+    // right-aligned below it ending in cell 8 (glyphs sit 1 px into each cell).
+    drawText(r, "SIDE-ONE", 9, 0, 1, hudRot(HUD_ROT_SIDE, hudRotStep(g), 0));
+    std::snprintf(buf, sizeof(buf), "%d", g.score);
+    drawText(r, buf, 65.0f - FONT_ADV * (float)(std::strlen(buf) - 1), 8, 1, {255, 255, 255});
 
-    drawMultiplier(r, g);
-    drawPowerBars(r, g);
+    drawMultiplierAndPower(r, g);
 
     const float top = HUD_H + GAME_H;
     const float l1  = top, l2 = top + 8;
@@ -482,8 +475,8 @@ void drawHiScores(SDL_Renderer* r, const Game& g) {
         drawTextCentered(r, "FANTASTIC SCORE!", cx, HUD_H + 8,  1, {255, 140, 0});
         drawTextCentered(r, "RECORD YOUR NAME", cx, HUD_H + 22, 1, {255, 255, 255});
     } else {
-        // Align 'B' under the last letter of the HUD's "SIDE-ONE" (drawn at x=3).
-        drawText(r, "BEST PLAYERS", 3.0f + 7 * FONT_ADV, HUD_H + 14, 1, {255, 140, 0});
+        // Align 'B' under the last letter of the HUD's "SIDE-ONE" (drawn at x=9).
+        drawText(r, "BEST PLAYERS", 9.0f + 7 * FONT_ADV, HUD_H + 14, 1, {255, 140, 0});
     }
 
     const float rankX = 8, scoreX = 44, nameX = 112, roundX = 150;

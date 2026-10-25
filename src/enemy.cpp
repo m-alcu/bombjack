@@ -99,6 +99,13 @@ void updateMummy(Game& g, Enemy& e, float dt) {
         e.phase = EP_FALL;
         return;
     }
+    if (e.phase == EP_FALL) {
+        // Arcade: cut the fall sound, play the landing thud, and on the floor
+        // (where the mummy transforms) the transform sound.
+        audio::stopTag("mummy_fall");
+        audio::play(audio::SND_MUMMY_LAND);
+        if (ground->y >= FLOOR_TOP - 1.0f) audio::play(audio::SND_MUMMY_TRANSFORM);
+    }
     if (ground->y >= FLOOR_TOP - 1.0f) {
         e.phase = EP_DISAPPEAR;
         e.timer = MUMMY_DISAPPEAR_TIME;

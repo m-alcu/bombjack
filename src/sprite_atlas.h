@@ -128,18 +128,6 @@ inline constexpr AtlasRect PICK[] = {
     {175, 159, 26, 26}, {209, 159, 30, 28}, {244, 159, 32, 29}, {282, 156, 32, 32},
 };
 
-// Power-bar segments (BAR_STEPS each side, shared y/h, irregular x and width).
-inline constexpr AtlasRect BAR_RIGHT[] = {
-    {124, 200, 8, 8}, {136, 200, 8, 8}, {148, 200, 8, 8}, {160, 200, 4, 8},
-    {168, 200, 4, 8}, {176, 200, 8, 8}, {188, 200, 8, 8}, {200, 200, 4, 8},
-    {208, 200, 4, 8}, {216, 200, 8, 8}, {228, 200, 8, 8},
-};
-inline constexpr AtlasRect BAR_LEFT[] = {
-    {240, 200, 4, 8}, {248, 200, 8, 8}, {260, 200, 8, 8}, {272, 200, 4, 8},
-    {280, 200, 4, 8}, {288, 200, 8, 8}, {300, 200, 8, 8}, {312, 200, 4, 8},
-    {320, 200, 4, 8}, {328, 200, 8, 8}, {340, 200, 8, 8},
-};
-
 // Font glyphs: two rows of FONT_W x FONT_H cells, plus punctuation.
 inline constexpr int FONT_LETTER_Y = 212;   // A-Z
 inline constexpr int FONT_DIGIT_Y  = 224;    // 0-9 and punctuation

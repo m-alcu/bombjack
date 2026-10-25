@@ -20,7 +20,15 @@ struct Clip {
     SDL_AudioSpec spec{};
     Uint8*        buf = nullptr;   // always SDL_malloc'd → freed with SDL_free
     Uint32        len = 0;
+    // Optional loop region (see kLoop): a looping channel plays buf[0, headLen)
+    // once, then repeats loopBuf, whose tail is crossfaded into the region start.
+    Uint8*        loopBuf = nullptr;
+    Uint32        loopLen = 0;
+    Uint32        headLen = 0;
 };
+
+// Loop region for clips whose recording is not a clean loop, in seconds.
+struct LoopSpec { float start, end, xfade; };
 
 // One playing channel: a stream bound to the output device, mirroring a
 // TEsound channel (a sound + its tag + optional loop / finished callback).
@@ -30,6 +38,7 @@ struct Channel {
     std::string      tag;
     bool             loop       = false;
     bool             paused     = false;
+    bool             headFed    = false;
     void (*onFinished)()        = nullptr;
 };
 
@@ -54,7 +63,7 @@ const char* kFile[SND_COUNT] = {
     "kill_ennemy.wav",
     "mummy_appear.wav",
     "mummy_fall.wav",
-    "bonus.wav",
+    "coin_bounce.wav",
     "take_bonus.wav",
     "04 Got a Special Coin.wav",
     "03_Ringo_no_Mori_no_Koneko_Tachi_BGM_1.mp3",
@@ -62,6 +71,20 @@ const char* kFile[SND_COUNT] = {
     "10_Lady_Madonna_BGM3.mp3",
     "01 Title.wav",
     "13_Name_Entry_1.mp3",
+    // Recorded from the arcade's sound board in MAME (sound commands 0x17,
+    // 0x2D, 0x14; coin_bounce.wav is 0x1D), DC-filtered and level-matched.
+    "mummy_land.wav",
+    "mummy_transform.wav",
+    "jack_death_fall.wav",
+};
+
+// The Power-ball tone is a pitch sweep the arcade repeats every 1.385 s, but the
+// recording slows down after its first sweep and fades out, so looping the whole
+// file wobbles and dips. Loop only its first sweep (1.367 s, matched against the
+// arcade in MAME) with a 20 ms crossfade.
+const LoopSpec kLoop[SND_COUNT] = {
+    {}, {}, {}, {}, {}, {},
+    {0.1f, 1.46689f, 0.02f},   // SND_POWER_APPEARING
 };
 
 #ifndef ASSET_ROOT
@@ -119,10 +142,55 @@ bool loadClip(Sid id) {
     return true;
 }
 
-// Feed one full copy of the clip into a channel's stream.
+// Build a clip's crossfaded loop buffer from its kLoop region (F32 clips only,
+// i.e. the decoded MP3s).
+void buildLoop(Sid id) {
+    const LoopSpec& ls = kLoop[id];
+    Clip& c = g_clips[id];
+    if (ls.end <= ls.start || !c.buf || c.spec.format != SDL_AUDIO_F32) return;
+    const int    chans  = c.spec.channels;
+    const Uint32 frames = c.len / (Uint32)(chans * sizeof(float));
+    const Uint32 s = (Uint32)(ls.start * c.spec.freq);
+    const Uint32 e = (Uint32)(ls.end * c.spec.freq);
+    const Uint32 n = (Uint32)(ls.xfade * c.spec.freq);
+    if (e > frames || n > s || n > e - s) return;
+    const float* src = (const float*)c.buf;
+    float* lb = (float*)SDL_malloc((e - s) * chans * sizeof(float));
+    if (!lb) return;
+    std::memcpy(lb, src + s * chans, (e - s) * chans * sizeof(float));
+    // Fade the region's tail into the audio just before its start, so the wrap
+    // from the last sample back to the first is continuous.
+    for (Uint32 i = 0; i < n; ++i) {
+        const float t = (float)i / (float)n;
+        for (int k = 0; k < chans; ++k) {
+            float& out = lb[((e - s) - n + i) * chans + k];
+            out = src[(e - n + i) * chans + k] * (1.0f - t) + src[(s - n + i) * chans + k] * t;
+        }
+    }
+    c.loopBuf = (Uint8*)lb;
+    c.loopLen = (e - s) * chans * sizeof(float);
+    c.headLen = s * chans * sizeof(float);
+}
+
+// Feed one copy of the clip into a channel's stream: the whole clip, or for a
+// looping clip with a loop region, its head once and then the loop buffer.
 void feed(Channel& ch) {
     const Clip& c = g_clips[ch.id];
+    if (ch.loop && c.loopBuf) {
+        if (!ch.headFed) {
+            SDL_PutAudioStreamData(ch.stream, c.buf, (int)c.headLen);
+            ch.headFed = true;
+        }
+        SDL_PutAudioStreamData(ch.stream, c.loopBuf, (int)c.loopLen);
+        return;
+    }
     SDL_PutAudioStreamData(ch.stream, c.buf, (int)c.len);
+}
+
+// Bytes a looping channel needs queued ahead to stay gapless.
+Uint32 loopChunk(Sid id) {
+    const Clip& c = g_clips[id];
+    return c.loopBuf ? c.loopLen : c.len;
 }
 
 }  // namespace
@@ -141,8 +209,10 @@ bool init() {
     SDL_GetAudioDeviceFormat(g_dev, &g_devSpec, nullptr);
 
     bool anyLoaded = false;
-    for (int i = 0; i < SND_COUNT; ++i)
+    for (int i = 0; i < SND_COUNT; ++i) {
         anyLoaded |= loadClip((Sid)i);
+        buildLoop((Sid)i);
+    }
 
     g_ok = anyLoaded;
     return g_ok;
@@ -157,7 +227,9 @@ void shutdown() {
     g_channels.clear();
     for (Clip& c : g_clips) {
         if (c.buf) SDL_free(c.buf);
+        if (c.loopBuf) SDL_free(c.loopBuf);
         c.buf = nullptr;
+        c.loopBuf = nullptr;
     }
     if (g_dev) SDL_CloseAudioDevice(g_dev);
     g_dev = 0;
@@ -192,7 +264,7 @@ void update() {
             // Keep at least one clip buffered ahead for a gapless loop. Paused
             // channels keep looping silently so they still count as "playing".
             if (!ch.paused &&
-                SDL_GetAudioStreamQueued(ch.stream) < (int)g_clips[ch.id].len)
+                SDL_GetAudioStreamQueued(ch.stream) < (int)loopChunk(ch.id))
                 feed(ch);
             ++i;
             continue;

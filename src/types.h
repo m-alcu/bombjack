@@ -128,7 +128,7 @@ struct Game {
     bool  alwaysS = false;   // OPTIONS toggle: spawn an S bonus every level
     bool  start100k = false; // OPTIONS toggle: start a game with 100000 points
     int   litBomb  = -1, catched = 0;
-    int   phaseStart = 0, multiplier = 1;
+    int   multiplier = 1;
     int   nextBonusScore = BONUS_LIMIT;
     int   bCoins = 0, nextEAt = BONUS_E_EVERY, livesLost = 0;
     int   killCount = 0;
