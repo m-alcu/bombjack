@@ -24,18 +24,26 @@ constexpr float SPRITE_AR = 4.0f / 3.0f;
 constexpr float JACK_DRAW_W = 26.0f * SPRITE_AR;
 constexpr float JACK_DRAW_H = 28.0f;
 
-// Player physics
-constexpr float MOVE           = 170.0f;
-constexpr float JUMP_VEL       = -630.0f;
-constexpr float JUMP_HOLD_GRAV = 500.0f;
-constexpr float FLUTTER        = 165.0f;
-constexpr float FLUTTER_MIN    = -200.0f;
-constexpr float GRAVITY        = 980.0f;
-constexpr float GLIDE          = 150.0f;
-constexpr float MAXFALL        = 520.0f;
+// Player physics, measured from the arcade original running in MAME. The
+// arcade ticks at 59.19 Hz in 8.8 fixed-point screen pixels; these convert
+// px/frame to world units/s (x: 512/224 per px, y: 2 per px).
+constexpr float ARCADE_HZ   = 59.185606f;
+constexpr float PX_TO_WU_X  = (float)LOGW / (float)GAME_W;
+constexpr float PX_TO_WU_Y  = (float)LOGH / (float)GAME_H;
+constexpr float MOVE        = 1.5f * ARCADE_HZ * PX_TO_WU_X;               // 0x0180/frame
+constexpr float JUMP_VEL    = -(810.0f / 256.0f) * ARCADE_HZ * PX_TO_WU_Y;  // launch speed
+constexpr float GRAVITY     = (10.0f / 256.0f) * ARCADE_HZ * ARCADE_HZ * PX_TO_WU_Y;
+constexpr float MAXFALL     = (810.0f / 256.0f) * ARCADE_HZ * PX_TO_WU_Y;   // fall-speed cap
+constexpr float JUMP_CROUCH = 8.0f / ARCADE_HZ;   // crouch before take-off
+constexpr float GRAV_UP     = 0.5f;   // Up held in the air: half gravity
+constexpr float GRAV_DOWN   = 2.0f;   // Down held in the air: double gravity
+// Bomb pickup: |dx| < 10 px and |dy| < 8 px between Jack's and the bomb's centres.
+constexpr float PICK_DX = 10.0f * PX_TO_WU_X;
+constexpr float PICK_DY = 8.0f * PX_TO_WU_Y;
+constexpr float JACK_CENTER_ABOVE_FEET = 8.0f * PX_TO_WU_Y;  // 16 px tall arcade sprite
 
 constexpr float PW = 18.0f;
-constexpr float PH = 24.0f;
+constexpr float PH = 32.0f;   // 16 px tall like the arcade sprite (head bumps match)
 constexpr float BORDER_SOLID_X = 8.0f * (float)LOGW / (float)GAME_W;
 constexpr float BORDER_SOLID_Y = 8.0f * (float)LOGH / (float)GAME_H;
 constexpr float BOMB_HALF_W = 6.0f * (float)LOGW / (float)GAME_W;
@@ -80,7 +88,6 @@ constexpr int POWER_POINTS[] = {100, 200, 300, 500, 800, 1000, 2000};
 
 // Mummy lifecycle
 constexpr float MUMMY_HALF_H        = 14.0f;
-constexpr float MUMMY_SPAWN_Y       = 90.0f;
 constexpr float MUMMY_DROP_GAP      = 8.0f;
 constexpr float INIT_ENEMY_TIME     = 0.6f;
 constexpr float MUMMY_APPEAR_TIME   = 1.1f;

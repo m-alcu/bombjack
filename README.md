@@ -18,9 +18,11 @@ the next, wrapping after the fifth.
 
 ## Gameplay
 
-- Play through **30 hand-authored levels** (then they loop), each with its own
-  platform layout, bomb arrangement and backdrop — including the platform-less
-  "California" stages where you must float to every bomb.
+- Play through the arcade's **64 rounds** (after round 64 play continues from
+  round 32, as on the cabinet), each with its own platform layout, bomb
+  arrangement and backdrop — including the platform-less stages where you must
+  float to every bomb. Layouts, bomb positions and the lit-bomb order are taken
+  from the original ROM.
 - Collect **every bomb** in a round to advance to the next, harder round.
 - After you grab the first bomb, one bomb always shows a **glowing fuse** that
   lights the bombs in a fixed sequence. Grab the lit ("fire") bomb to keep the
@@ -50,13 +52,17 @@ the next, wrapping after the fifth.
 | -------------- | -------------------------------------------------- |
 | Left / A       | Move left                                          |
 | Right / D      | Move right                                         |
-| Space / Up / W | Jump on the ground; **tap** in the air to flutter, **hold** to glide |
+| Space          | Jump on the ground; press again in the air to stop |
+| Up / W         | In the air: half gravity (jump higher, fall slower) |
+| Down / S       | In the air: double gravity (jump lower, fall faster) |
 | R              | Restart after game over                            |
 | Esc / Q        | Quit                                               |
 
-The floaty jump is the heart of Bomb Jack: tap the jump button in mid-air to get
-small upward kicks (you can hover and slowly climb), or hold it to drift down
-gently.
+The jump works like the arcade's (speeds measured from the original in MAME):
+Jack crouches for a moment, then every jump is full height — holding the button
+changes nothing. Pressing it again mid-air cancels his vertical speed: during a
+rise he stops and starts to fall, and during a fall he restarts from rest, so
+tapping repeatedly makes him hover and sink slowly.
 
 ## Sound
 

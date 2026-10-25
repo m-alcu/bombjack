@@ -11,36 +11,41 @@
 // the TEsound finished-callback the Lua original attaches to that sound.
 static void resumeMusic() { audio::resumeTag("music"); }
 
-// In-game BGM rotates over three tracks by level number, matching the Godot
-// reference (each Scenes/LevelN.tscn hard-codes its stream): %3==1 → BGM 1,
-// %3==2 → BGM 3, %3==0 → BGM 2 (levels 3, 6, 9…).
+// In-game BGM comes from the round table's music index (0..2). Index→track
+// follows the Godot reference (rounds 1, 2, 3 → BGM 1, BGM 3, BGM 2); the
+// mapping to the arcade's own tunes has not been verified by ear.
 static audio::Sid musicForLevel(int level) {
-    switch (((level % 3) + 3) % 3) {
-        case 1:  return audio::SND_MUSIC;
-        case 2:  return audio::SND_MUSIC_3;
+    switch (leveldata::rounds[leveldata::roundIndex(level)].music) {
+        case 0:  return audio::SND_MUSIC;
+        case 1:  return audio::SND_MUSIC_3;
         default: return audio::SND_MUSIC_2;
     }
 }
 
-const leveldata::Layout& currentLayout(const Game& g) {
-    int idx = (g.level - 1) % leveldata::LEVEL_COUNT;
-    return leveldata::layouts[leveldata::levels[idx].layout];
+const leveldata::Round& currentRound(const Game& g) {
+    return leveldata::rounds[leveldata::roundIndex(g.level)];
 }
 
-const leveldata::LevelDef& levelDef(const Game& g) {
-    return leveldata::levels[(g.level - 1) % leveldata::LEVEL_COUNT];
+const leveldata::PlatLayout& currentPlatLayout(const Game& g) {
+    return leveldata::platLayouts[currentRound(g).platLayout];
+}
+
+const leveldata::BombLayout& currentBombLayout(const Game& g) {
+    return leveldata::bombLayouts[currentRound(g).bombLayout];
+}
+
+const leveldata::EnemyDef& levelDef(const Game& g) {
+    return leveldata::enemyDefs[leveldata::roundIndex(g.level) % leveldata::ENEMY_DEF_COUNT];
 }
 
 int currentScreen(const Game& g) {
-    int idx = (g.level - 1) % leveldata::LEVEL_COUNT;
-    return leveldata::levels[idx].screen;
+    return currentRound(g).screen;
 }
 
 void initPlatforms(Game& g) {
     g.platforms.clear();
     g.platforms.push_back({0, FLOOR_TOP, LOGW, LOGH - FLOOR_TOP});
-    if (currentScreen(g) == 4) return;   // California screen has no platforms
-    const leveldata::Layout& lay = currentLayout(g);
+    const leveldata::PlatLayout& lay = currentPlatLayout(g);   // empty on platform-less rounds
     for (int i = 0; i < lay.nplats; ++i) {
         const leveldata::Plat& p = lay.plats[i];
         g.platforms.push_back({p.x, p.y, p.w, p.h});
@@ -49,7 +54,7 @@ void initPlatforms(Game& g) {
 
 void spawnBombs(Game& g) {
     g.bombs.clear();
-    const leveldata::Layout& lay = currentLayout(g);
+    const leveldata::BombLayout& lay = currentBombLayout(g);
     for (int i = 0; i < lay.nbombs; ++i)
         g.bombs.push_back({lay.bombs[i].x, lay.bombs[i].y, false});
     g.bombsLeft = (int)g.bombs.size();
@@ -72,8 +77,7 @@ static Enemy makeBird(Game& g, float ang) {
 
 void spawnEnemies(Game& g) {
     g.enemies.clear();
-    int idx   = (g.level - 1) % leveldata::LEVEL_COUNT;
-    int birds = leveldata::levels[idx].birds;
+    int birds = levelDef(g).birds;
     for (int i = 0; i < birds; ++i)
         g.enemies.push_back(makeBird(g, (i + 0.5f) / birds * 6.2831853f));
 }
@@ -93,6 +97,7 @@ void resetPlayer(Game& g, bool invuln) {
     g.p.y        = LOGH / 2.0f - PH / 2.0f;
     g.p.vx       = g.p.vy = 0.0f;
     g.p.onGround = false;
+    g.p.crouch   = 0.0f;
     g.p.invuln   = invuln ? INVULN_TIME : 0.0f;
 }
 
@@ -144,7 +149,7 @@ void startRound(Game& g) {
 
 void optionAdjust(Game& g, int d) {
     switch (g.optSel) {
-        case 0: g.startLevel = std::clamp(g.startLevel + d, 1, leveldata::LEVEL_COUNT); break;
+        case 0: g.startLevel = std::clamp(g.startLevel + d, 1, leveldata::ROUND_COUNT); break;
         case 1: g.startLives = std::clamp(g.startLives + d, 1, OPT_MAX_LIVES);          break;
         case 2: g.imgStyle   = (g.imgStyle + d + OPT_IMG_STYLES) % OPT_IMG_STYLES;      break;
         case 3: g.alwaysS    = !g.alwaysS;                                              break;
@@ -395,38 +400,43 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     // Tracks actions that step the Power orb colour (jumps, wall bumps, landings).
     bool orbStep = in.jumpPressed;
 
-    // Horizontal movement.
-    p.vx = (in.right ? MOVE : 0.0f) - (in.left ? MOVE : 0.0f);
-    if (p.vx > 0) p.face = 1;
-    else if (p.vx < 0) p.face = -1;
+    // Horizontal movement (frozen while crouching before take-off).
+    p.vx = p.crouch > 0.0f ? 0.0f : (in.right ? MOVE : 0.0f) - (in.left ? MOVE : 0.0f);
+    if (in.right && !in.left) p.face = 1;
+    else if (in.left && !in.right) p.face = -1;
     p.x += p.vx * dt;
     float clampedX = std::clamp(p.x, BORDER_SOLID_X, LOGW - PW - BORDER_SOLID_X);
     if (clampedX != p.x && p.vx != 0.0f) orbStep = true;
     p.x = clampedX;
 
-    // Jump / flutter logic.
-    if (in.jumpPressed) {
+    // Jump logic, as in the arcade: every jump is full height (holding the
+    // button changes nothing); a fresh press in the air cancels vertical speed,
+    // which ends a rise or restarts a fall from rest (tapping = hovering).
+    if (in.jumpPressed && p.crouch <= 0.0f) {
         if (p.onGround) {
-            p.vy = JUMP_VEL;
-            p.onGround = false;
+            p.crouch = JUMP_CROUCH;
             audio::play(audio::SND_JUMP);
-        } else if (p.vy < 0) {
-            p.vy = 0;
         } else {
-            p.vy -= FLUTTER;
-            if (p.vy < FLUTTER_MIN) p.vy = FLUTTER_MIN;
+            p.vy = 0;
+        }
+    }
+    if (p.crouch > 0.0f) {
+        p.crouch -= dt;
+        if (p.crouch <= 0.0f) {
+            p.crouch   = 0.0f;
+            p.vy       = JUMP_VEL;
+            p.onGround = false;
         }
     }
 
-    float grav;
-    if (in.jumpHeld && p.vy < 0)
-        grav = in.up ? GLIDE : JUMP_HOLD_GRAV;
-    else if (in.jumpHeld && p.vy > 0)
-        grav = GLIDE;
-    else
-        grav = GRAVITY;
-    p.vy += grav * dt;
-    if (p.vy > MAXFALL) p.vy = MAXFALL;
+    // Up halves and Down doubles gravity in the air, rising or falling.
+    if (p.crouch <= 0.0f) {
+        float grav = GRAVITY;
+        if (in.up && !in.down)      grav *= GRAV_UP;
+        else if (in.down && !in.up) grav *= GRAV_DOWN;
+        p.vy += grav * dt;
+        if (p.vy > MAXFALL) p.vy = MAXFALL;
+    }
 
     float oldTop    = p.y;
     float oldBottom = p.y + PH;
@@ -478,8 +488,9 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     for (int i = 0; i < (int)g.bombs.size(); ++i) {
         Bomb& b = g.bombs[i];
         if (b.collected) continue;
-        if (b.x > p.x - BOMB_HALF_W && b.x < p.x + PW + BOMB_HALF_W &&
-            b.y > p.y - BOMB_HALF_H && b.y < p.y + PH + BOMB_HALF_H) {
+        const float jackCx = p.x + PW / 2.0f;
+        const float jackCy = p.y + PH - JACK_CENTER_ABOVE_FEET;
+        if (std::fabs(b.x - jackCx) < PICK_DX && std::fabs(b.y - jackCy) < PICK_DY) {
             b.collected = true;
             g.bombsLeft--;
             g.explosions.push_back({b.x, b.y, 0.0f});
@@ -673,7 +684,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
 
     // Mummy drop-in schedule.
     if (!frozen) {
-        const leveldata::LevelDef& L = levelDef(g);
+        const leveldata::EnemyDef& L = levelDef(g);
         g.mummyTimer += dt;
         if (g.mummyTimer >= MUMMY_SPAWN_DELAY && g.mummiesSpawned < L.nmummies) {
             g.mummyTimer = 0.0f;

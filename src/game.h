@@ -3,8 +3,10 @@
 #include "types.h"
 
 // Level data accessors (also used by enemy.cpp).
-const leveldata::Layout&   currentLayout(const Game& g);
-const leveldata::LevelDef& levelDef(const Game& g);
+const leveldata::Round&      currentRound(const Game& g);
+const leveldata::PlatLayout& currentPlatLayout(const Game& g);
+const leveldata::BombLayout& currentBombLayout(const Game& g);
+const leveldata::EnemyDef&   levelDef(const Game& g);
 
 // Which of the five backdrops the current level uses.
 int currentScreen(const Game& g);

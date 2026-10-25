@@ -31,6 +31,7 @@ struct Player {
     bool  onGround;
     float invuln;
     int   face = 1;
+    float crouch = 0.0f;   // >0 while crouching before a jump take-off
 };
 
 struct Bomb { float x, y; bool collected; };

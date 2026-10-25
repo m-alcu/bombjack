@@ -7,18 +7,25 @@
 #include <random>
 
 void spawnMummy(Game& g) {
-    const leveldata::LevelDef& L  = levelDef(g);
-    const leveldata::Layout&   lay = currentLayout(g);
+    const leveldata::EnemyDef&   L   = levelDef(g);
+    const leveldata::PlatLayout& lay = currentPlatLayout(g);
     Enemy e;
     e.kind  = EK_MUMMY;
     e.phase = EP_INIT;
     e.timer = INIT_ENEMY_TIME;
     e.r     = 10.0f;
-    e.x     = lay.mummyx[g.p.x < LOGW / 2 ? 1 : 0];
+    // Arcade rule: pick one of the layout's 4 spawn points at random, on the
+    // half of the screen away from Jack.
+    const bool jackLeft = g.p.x + PW / 2.0f < LOGW / 2.0f;
+    int cand[4], n = 0;
+    for (int i = 0; i < 4; ++i)
+        if ((lay.mummySpawn[i].x < leveldata::MUMMY_SPAWN_SPLIT_X) != jackLeft) cand[n++] = i;
+    const leveldata::Pt& sp = lay.mummySpawn[n ? cand[g.rng() % n] : g.rng() % 4];
+    e.x = sp.x;
     float topY = FLOOR_TOP;
     for (const SDL_FRect& pl : g.platforms)
-        if (e.x > pl.x && e.x < pl.x + pl.w) topY = std::min(topY, pl.y);
-    e.y = std::min(MUMMY_SPAWN_Y, topY - MUMMY_HALF_H - MUMMY_DROP_GAP);
+        if (e.x > pl.x && e.x < pl.x + pl.w && pl.y > sp.y) topY = std::min(topY, pl.y);
+    e.y = std::min(sp.y, topY - MUMMY_HALF_H - MUMMY_DROP_GAP);
     e.vx = e.vy = 0.0f;
     e.bounces = L.bouncing;
     e.becomes = L.mummies[g.transformIdx % L.nmummies];
