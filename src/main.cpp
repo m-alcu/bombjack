@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 static int selfTest(int steps) {
     Game g;
+    g.rng.seed(1);   // reproducible runs
     initPlatforms(g);
     startGame(g);
     const float dt = 1.0f / 120.0f;
@@ -62,6 +63,7 @@ static int renderTest() {
     buildBackground(ren);
 
     Game g;
+    g.rng.seed(1);
     initPlatforms(g);
     buildJackSprite(g.jackSprite);
     loadHiScores(g);
@@ -91,7 +93,7 @@ static int shot(int level, const char* out) {
     if (!ren) { SDL_Quit(); return 1; }
     SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     buildSprites(ren); buildBackground(ren);
-    Game g; initPlatforms(g); buildJackSprite(g.jackSprite); loadHiScores(g);
+    Game g; g.rng.seed(1); initPlatforms(g); buildJackSprite(g.jackSprite); loadHiScores(g);
     g.startLevel = level; startGame(g); g.startAnim = 0.0f;
     render(ren, g);
     SDL_Surface* s = SDL_RenderReadPixels(ren, nullptr);
@@ -106,6 +108,7 @@ static int shot(int level, const char* out) {
 // against the arcade in MAME). `cycle` parity picks recording A or B.
 static int demoTrace(int round, int cycle) {
     Game g;
+    g.rng.seed(1);
     g.attract.cycle = cycle;
     startDemo(g, round);
     const float x0 = g.p.x, y0 = g.p.y;
@@ -137,6 +140,7 @@ static int demoTrace(int round, int cycle) {
 // enemy animation against the arcade in MAME).
 static int enemyTrace(int level, int frames) {
     Game g;
+    g.rng.seed(1);
     initPlatforms(g);
     g.startLevel = level;
     startGame(g);
