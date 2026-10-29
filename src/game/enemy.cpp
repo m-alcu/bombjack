@@ -1,7 +1,7 @@
-#include "enemy.h"
-#include "audio.h"
-#include "game.h"
-#include "levels_data.h"
+#include "game/enemy.h"
+#include "platform/audio.h"
+#include "game/game.h"
+#include "data/levels_data.h"
 #include <algorithm>
 #include <cmath>
 #include <random>

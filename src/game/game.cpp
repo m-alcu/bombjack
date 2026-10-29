@@ -1,8 +1,8 @@
-#include "game.h"
-#include "audio.h"
-#include "demo_data.h"
-#include "demo_runs.h"
-#include "enemy.h"
+#include "game/game.h"
+#include "platform/audio.h"
+#include "data/demo_data.h"
+#include "data/demo_runs.h"
+#include "game/enemy.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>

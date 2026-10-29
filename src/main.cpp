@@ -4,14 +4,14 @@
 #include <cstring>
 #include <vector>
 
-#include "constants.h"
-#include "types.h"
-#include "renderer.h"
-#include "sprites.h"
-#include "background.h"
-#include "game.h"
-#include "draw.h"
-#include "audio.h"
+#include "core/constants.h"
+#include "game/types.h"
+#include "render/gfx.h"
+#include "render/textures.h"
+#include "render/background.h"
+#include "game/game.h"
+#include "render/draw.h"
+#include "platform/audio.h"
 
 // ---------------------------------------------------------------------------
 // Headless simulation smoke test
@@ -59,7 +59,7 @@ static int renderTest() {
     }
     SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H,
                                      SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    buildSprites(ren);
+    buildTextures(ren);
     buildBackground(ren);
 
     Game g;
@@ -76,7 +76,7 @@ static int renderTest() {
         ++frames;
     }
 
-    destroySprites();
+    destroyTextures();
     destroyBackground();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);
@@ -92,13 +92,13 @@ static int shot(int level, const char* out) {
     SDL_Renderer* ren = win ? SDL_CreateRenderer(win, nullptr) : nullptr;
     if (!ren) { SDL_Quit(); return 1; }
     SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H, SDL_LOGICAL_PRESENTATION_LETTERBOX);
-    buildSprites(ren); buildBackground(ren);
+    buildTextures(ren); buildBackground(ren);
     Game g; g.rng.seed(1); initPlatforms(g); buildJackSprite(g.jackSprite); loadHiScores(g);
     g.startLevel = level; startGame(g); g.startAnim = 0.0f;
     render(ren, g);
     SDL_Surface* s = SDL_RenderReadPixels(ren, nullptr);
     if (s) { SDL_SaveBMP(s, out); SDL_DestroySurface(s); std::printf("shot %d -> %s\n", level, out); }
-    destroySprites(); destroyBackground();
+    destroyTextures(); destroyBackground();
     SDL_DestroyRenderer(ren); SDL_DestroyWindow(win); SDL_Quit();
     return 0;
 }
@@ -211,7 +211,7 @@ int main(int argc, char** argv) {
     SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H,
                                      SDL_LOGICAL_PRESENTATION_STRETCH);
 
-    buildSprites(ren);
+    buildTextures(ren);
     buildBackground(ren);
     audio::init();   // silent no-op fallback if no audio device is available
 
@@ -315,7 +315,7 @@ int main(int argc, char** argv) {
     }
 
     audio::shutdown();
-    destroySprites();
+    destroyTextures();
     destroyBackground();
     SDL_DestroyRenderer(ren);
     SDL_DestroyWindow(win);

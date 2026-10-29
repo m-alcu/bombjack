@@ -1,5 +1,5 @@
-#include "renderer.h"
-#include "sprite_atlas.h"
+#include "render/gfx.h"
+#include "render/sprite_atlas.h"
 #include <cctype>
 #include <cmath>
 #include <cstring>

@@ -1,12 +1,12 @@
 #pragma once
-#include "constants.h"
+#include "core/constants.h"
 
 // ---------------------------------------------------------------------------
 // Atlas layout: where every sprite lives inside sprites_full_png.
 //
 // This header is *data only* — the pixel coordinates of each sprite in the
-// shared atlas, kept separate from the slicing/processing code in sprites.cpp
-// and renderer.cpp. Tweak a sprite's position here; the build code stays put.
+// shared atlas, kept separate from the slicing/processing code in textures.cpp
+// and gfx.cpp. Tweak a sprite's position here; the build code stays put.
 //
 //   AtlasRect  — a single source rectangle {x, y, w, h}.
 //   AtlasStrip — N evenly-spaced frames; frame i is at {x0 + i*dx, y, w, h}.

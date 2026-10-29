@@ -1,6 +1,6 @@
 #pragma once
 #include <SDL3/SDL.h>
-#include "types.h"
+#include "game/types.h"
 
 // Background textures (defined in background.cpp).
 extern SDL_Texture* g_bgTex;

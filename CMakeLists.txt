@@ -6,14 +6,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(bombjack
     src/main.cpp
-    src/renderer.cpp
-    src/sprites.cpp
-    src/background.cpp
-    src/enemy.cpp
-    src/game.cpp
-    src/draw.cpp
-    src/audio.cpp
+    src/game/game.cpp
+    src/game/enemy.cpp
+    src/render/gfx.cpp
+    src/render/textures.cpp
+    src/render/background.cpp
+    src/render/draw.cpp
+    src/platform/audio.cpp
 )
+target_include_directories(bombjack PRIVATE src)
 
 # Absolute path to the repo so the game can find assets/sounds/ regardless of
 # the working directory it is launched from.

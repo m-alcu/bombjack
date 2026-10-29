@@ -4,9 +4,9 @@
 #include <cstdint>
 #include <random>
 #include <vector>
-#include "constants.h"
-#include "color.h"
-#include "animsprite.h"
+#include "core/constants.h"
+#include "core/color.h"
+#include "render/animsprite.h"
 
 enum BonusKind  { BK_B, BK_E, BK_S };
 enum State      { TITLE, OPTIONS, PLAYING, ROUNDCLEAR, SPECIALBONUS, LUCKY, GAMEOVER, NAMEENTRY };

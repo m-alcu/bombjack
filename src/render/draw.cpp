@@ -1,9 +1,9 @@
-#include "draw.h"
-#include "renderer.h"
-#include "sprites.h"
-#include "animsprite.h"
-#include "background.h"
-#include "game.h"
+#include "render/draw.h"
+#include "render/gfx.h"
+#include "render/textures.h"
+#include "render/animsprite.h"
+#include "render/background.h"
+#include "game/game.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -22,7 +22,7 @@ void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
 }
 
 // Populate the player's owned AnimSprite with its living poses. Called once at
-// startup (after buildSprites), since the frame textures must already exist.
+// startup (after buildTextures), since the frame textures must already exist.
 // Walking is a 4-frame loop per direction; the other states are single poses.
 void buildJackSprite(AnimSprite& jack) {
     jack.setSize(JACK_DRAW_W, JACK_DRAW_H);

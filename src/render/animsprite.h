@@ -2,7 +2,7 @@
 // Generic animated sprite for this engine's prebaked-texture model.
 //
 // Unlike a classic atlas+sourceRect sprite, every frame here is a finished
-// SDL_Texture produced once by buildSprites(). An AnimSprite is therefore just
+// SDL_Texture produced once by buildTextures(). An AnimSprite is therefore just
 // a named collection of frame-texture sequences plus the live state needed to
 // pick one and blit it: position, size, flip and a colour-mod tint (this engine
 // recolours via SDL_SetTextureColorMod rather than CPU palette rotation).
@@ -16,7 +16,7 @@
 #include <utility>
 #include <vector>
 #include <unordered_map>
-#include "color.h"
+#include "core/color.h"
 
 class AnimSprite {
 public:

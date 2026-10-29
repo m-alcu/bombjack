@@ -1,11 +1,11 @@
 #pragma once
 #include <SDL3/SDL.h>
-#include "types.h"
-#include "game.h"
+#include "game/types.h"
+#include "game/game.h"
 
 void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t);
 
-// Populate the player's owned AnimSprite (call once, after buildSprites).
+// Populate the player's owned AnimSprite (call once, after buildTextures).
 void buildJackSprite(AnimSprite& jack);
 
 // While frozen (Jack holds the Power ball) he is drawn in palette 14, pal14.

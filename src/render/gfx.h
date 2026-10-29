@@ -1,8 +1,8 @@
 #pragma once
 #include <SDL3/SDL.h>
-#include "types.h"
+#include "game/types.h"
 
-// Build the bitmap font from the sprite atlas (called once from buildSprites).
+// Build the bitmap font from the sprite atlas (called once from buildTextures).
 void buildFont(SDL_Renderer* ren, SDL_Surface* atlas);
 
 // Primitive drawing helpers.

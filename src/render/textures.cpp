@@ -9,18 +9,18 @@
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wtype-limits"
-#include "stb_image.h"
+#include "third_party/stb_image.h"
 #pragma GCC diagnostic pop
 
-#include "sprites_full_png.h"
-#include "sprites.h"
-#include "sprite_atlas.h"
-#include "rom_pens.h"
+#include "data/sprites_full_png.h"
+#include "render/textures.h"
+#include "render/sprite_atlas.h"
+#include "data/rom_pens.h"
 #include <algorithm>
 #include <cstring>
 #include <vector>
 
-// Global sprite storage (defined here, declared extern in sprites.h).
+// Global sprite storage (defined here, declared extern in textures.h).
 Sprite g_bonusFrames[4];
 Sprite g_bonusE[4];
 Sprite g_bonusS[4];
@@ -101,7 +101,7 @@ unsigned char* loadAtlas(int* w, int* h) {
     return stbi_load_from_memory(sprites_full_png, (int)sprites_full_png_len, w, h, &c, 4);
 }
 
-void buildSprites(SDL_Renderer* ren) {
+void buildTextures(SDL_Renderer* ren) {
     int sw = 0, sh = 0;
     stbi_uc* spx = loadAtlas(&sw, &sh);
     if (!spx) { std::fprintf(stderr, "full sprites atlas decode failed\n"); return; }
@@ -375,7 +375,7 @@ void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
     SDL_SetTextureColorMod(tex, 255, 255, 255);
 }
 
-void destroySprites() {
+void destroyTextures() {
     auto dt = [](SDL_Texture*& t) { if (t) { SDL_DestroyTexture(t); t = nullptr; } };
     auto ds = [&](Sprite& s)      { dt(s.tex); };
     auto dv = [&](JackVarFrame& f){ dt(f.tex); };

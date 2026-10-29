@@ -1,6 +1,6 @@
 #pragma once
-#include "levels_data.h"
-#include "types.h"
+#include "data/levels_data.h"
+#include "game/types.h"
 
 // Level data accessors (also used by enemy.cpp).
 const leveldata::Round&      currentRound(const Game& g);

@@ -1,5 +1,5 @@
 #pragma once
-#include "types.h"
+#include "game/types.h"
 
 // Bird travel speed for a level.
 inline float birdSpeed(int level) {

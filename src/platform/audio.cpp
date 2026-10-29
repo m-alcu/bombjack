@@ -1,4 +1,4 @@
-#include "audio.h"
+#include "platform/audio.h"
 
 #include <SDL3/SDL.h>
 
@@ -8,7 +8,7 @@
 #include <vector>
 
 #define DR_MP3_IMPLEMENTATION
-#include "dr_mp3.h"  // keep STDIO enabled for drmp3_open_file_and_read_pcm_frames_f32
+#include "third_party/dr_mp3.h"  // keep STDIO enabled for drmp3_open_file_and_read_pcm_frames_f32
 
 namespace audio {
 namespace {

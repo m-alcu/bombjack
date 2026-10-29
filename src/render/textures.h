@@ -1,7 +1,7 @@
 #pragma once
 #include <SDL3/SDL.h>
-#include "types.h"
-#include "renderer.h"
+#include "game/types.h"
+#include "render/gfx.h"
 
 // Red level of the enemies' pen 1 (palette 4): the arcade steps it through
 // this table, one entry every EYE_PULSE_FRAMES (main ROM 0x0705).
@@ -66,10 +66,10 @@ extern SDL_Texture* g_initEnemyTex[4];
 unsigned char* loadAtlas(int* w, int* h);
 
 // Load all sprite textures from the embedded atlas.
-void buildSprites(SDL_Renderer* ren);
+void buildTextures(SDL_Renderer* ren);
 
 // Free all sprite textures (call before SDL_DestroyRenderer).
-void destroySprites();
+void destroyTextures();
 
 void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
                    bool flip, Uint8 cr, Uint8 cg, Uint8 cb);

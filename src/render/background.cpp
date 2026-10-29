@@ -5,12 +5,12 @@
 #pragma GCC diagnostic ignored "-Wunused-but-set-variable"
 #pragma GCC diagnostic ignored "-Wunused-function"
 #pragma GCC diagnostic ignored "-Wtype-limits"
-#include "stb_image.h"
+#include "third_party/stb_image.h"
 #pragma GCC diagnostic pop
 
-#include "screens_png.h"
-#include "background.h"
-#include "sprites.h"     // for loadAtlas
+#include "data/screens_png.h"
+#include "render/background.h"
+#include "render/textures.h"     // for loadAtlas
 #include <algorithm>
 #include <array>
 #include <cmath>
