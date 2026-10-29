@@ -18,9 +18,14 @@ constexpr float BOMB_HALF_H = 8.0f * (float)LOGH / (float)GAME_H;
 
 constexpr float BONUSTAKEN_SCALE = 1.8f;
 
-// Round-clear victory dance
-constexpr int   VICTORY_STEPS = 16;
-constexpr float VICTORY_FRAME = CLEAR_TIME / VICTORY_STEPS;
+// Round-clear victory dance (ROM sprites 0x31 normal, 0x32 left, 0x32
+// mirrored right, 0x33 up): the first pose holds VICTORY_LEAD frames, each
+// later one VICTORY_POSE, then Jack stands normal until he disappears
+// VICTORY_HIDE frames into the clear, 2 frames before the next round.
+constexpr int VICTORY_STEPS = 16;
+constexpr int VICTORY_LEAD  = 29;
+constexpr int VICTORY_POSE  = 14;
+constexpr int VICTORY_HIDE  = 242;
 constexpr int VICTORY_SEQ[VICTORY_STEPS] = {
     JW_NORMAL, JW_LEFT, JW_NORMAL, JW_RIGHT, JW_NORMAL, JW_UP, JW_NORMAL, JW_UP,
     JW_NORMAL, JW_LEFT, JW_NORMAL, JW_RIGHT, JW_NORMAL, JW_UP, JW_NORMAL, JW_UP,
@@ -118,9 +123,10 @@ static void drawPlayer(SDL_Renderer* r, const Player& p, float t,
 }
 
 static void drawJackVictory(SDL_Renderer* r, const Player& p, float clearTimer) {
-    float elapsed = CLEAR_TIME - clearTimer;
-    int step = std::clamp((int)(elapsed / VICTORY_FRAME), 0, VICTORY_STEPS - 1);
-    const JackVarFrame& fr = g_jackWin[VICTORY_SEQ[step]];
+    const int f = (int)((CLEAR_TIME - clearTimer) * ARCADE_HZ);
+    if (f >= VICTORY_HIDE) return;
+    const int step = f < VICTORY_LEAD ? 0 : 1 + (f - VICTORY_LEAD) / VICTORY_POSE;
+    const JackVarFrame& fr = g_jackWin[step < VICTORY_STEPS ? VICTORY_SEQ[step] : JW_NORMAL];
     if (!fr.tex) return;
     const float scale = 26.0f / 16.0f;
     const float dw = fr.w * scale * SPRITE_AR, dh = fr.h * scale;
@@ -274,11 +280,5 @@ void drawPlayfield(SDL_Renderer* r, const Game& g) {
         char sb[16];
         std::snprintf(sb, sizeof(sb), "%d", pp.value);
         drawTextCentered(r, sb, pp.x, pp.y, 1, {255, 240, 140});
-    }
-
-    char buf[64];
-    if (g.state == ROUNDCLEAR) {
-        std::snprintf(buf, sizeof(buf), "ROUND %d CLEAR!", g.round);
-        drawTextCentered(r, buf, LOGW / 2.0f, LOGH / 2.0f - 10, 3, {120, 255, 140});
     }
 }

@@ -20,7 +20,9 @@ constexpr float START_HOLD  = 0.65f * START_SPEED;
 constexpr float START_BLACK = 1.0f  * START_SPEED;
 constexpr float START_TOTAL = START_SLIDE + START_HOLD;
 
-constexpr float CLEAR_TIME  = 3.2f;   // round-clear victory dance
+// Round-clear victory dance, from the frame after the last bomb is taken to
+// the next round (measured in MAME: Jack poses where he stands, no text).
+constexpr float CLEAR_TIME  = 244.0f / ARCADE_HZ;
 
 // The current round's entries in the ROM tables (also used by enemy.cpp).
 const leveldata::Round&      currentRound(const Game& g);
