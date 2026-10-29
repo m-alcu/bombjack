@@ -1,18 +1,17 @@
-# Bomb Jack (minimal SDL3 / C++)
+# Bomb Jack (SDL3 / C++)
 
-A small, single-file homage to the 1984 arcade game *Bomb Jack*. Float around
-floating platforms, collect every bomb, grab the lit one to build a bonus, and
-dodge the chasers.
+A homage to the 1984 arcade game *Bomb Jack*. Float around the platforms,
+collect every bomb, take the lit ones for a bonus, and dodge the enemies.
 
-The character sprites (Jack's stand/walk/float frames, the fuse bomb, the
-flapping bird enemies) are cropped from the **official arcade Bomb Jack sprite
-sheet**; the girder platform is a small pixel map. The round backdrops are the
-five classic arcade scenes (Egypt, Greece, castle, city, night pyramid). Both
-the sprite sheet and the backdrop strip are embedded into the binary as PNGs and
-decoded at startup with the vendored, public-domain stb_image, so — together
-with the bitmap font — there are **no runtime asset files** to ship. Rounds
-cycle through the backdrops: round 1 shows the first, then each round advances to
-the next, wrapping after the fifth.
+Wherever possible the clone follows the original, read from its ROMs and
+measured in MAME: the round layouts, bomb order, Jack's physics, the enemies'
+animation, the palette cycles, the scoring and the attract-mode demo all come
+from the arcade. `tools/` holds the scripts used to get them.
+
+The sprite atlas and the classic backdrops are embedded in the binary as PNGs
+(decoded with the vendored stb_image). Sounds (`assets/sounds/`) and the
+optional background sets (`assets/*.png`) are loaded at run time from the
+repository, found through the `ASSET_ROOT` path the build bakes in.
 
 ![controls](https://img.shields.io/badge/SDL-3-blue)
 
@@ -23,40 +22,44 @@ the next, wrapping after the fifth.
   arrangement and backdrop — including the platform-less stages where you must
   float to every bomb. Layouts, bomb positions and the lit-bomb order are taken
   from the original ROM.
-- Collect **every bomb** in a round to advance to the next, harder round.
-- After you grab the first bomb, one bomb always shows a **glowing fuse** that
-  lights the bombs in a fixed sequence. Grab the lit ("fire") bomb to keep the
-  chain going — fire bombs are worth 200 (vs 100) and count toward the
-  end-of-round **Special Bonus**: catch 20–23 of them and a between-round screen
-  awards 10,000–50,000 bonus points, counting up onto your score.
-- Catching bombs charges the **POWER** gauge (lit bombs charge it faster). When
-  it fills, a colour-cycling **P orb** appears — grab it to **freeze every
-  chaser** for a few seconds.
-- While frozen, touch the chasers to **destroy them** for escalating points
+- Collect **every bomb** in a round to advance to the next one.
+- After you take the first bomb, one bomb always shows a **lit fuse**, lighting
+  the bombs in a fixed sequence. Fire (lit) bombs are worth 200 instead of 100
+  and count toward the end-of-round **Special Bonus**: take 20–23 of them and a
+  between-round screen awards 10,000–50,000 points.
+- Every take-off (a jump, or walking off a ledge) scores 10 points.
+- Bombs charge the **power bar** (lit bombs twice as fast). When it fills, the
+  **Power ball** appears. Each take-off changes its colour; take it to
+  **freeze every enemy** for about five seconds, for 100 to 2,000 points by
+  colour. While the freeze lasts Jack, the ball's colours and the HUD's
+  multiplier box share one rotating palette.
+- While frozen, the enemies turn into coins: touch them for escalating points
   (100, 200, 300, 500, 800 …); they blink as the freeze runs out.
-- Beyond the patrolling birds, **mummies** drop in over time, walk and tumble
-  down the platforms, and on reaching the ground **transform** into one of five
-  flying chasers — spheres (home horizontally), orbs (home vertically), clubs
-  (home both ways), horns (constant diagonal drift) and UFOs (dive straight at
-  you). Each level's transform sequence comes from the original game data.
-- Touching a chaser when *not* frozen costs a life; you respawn with brief
-  invulnerability (you blink). Lose all lives and it's game over. (A mummy is
-  harmless while it's still popping in.)
-- Floating score popups show every point gained.
-- Rounds are endless and the chasers get faster and more numerous — chase a high
-  score.
+- Besides the birds, **mummies** drop in over time, walk and tumble down the
+  platforms, and on reaching the floor **transform** into one of five chasers:
+  spheres (home in horizontally), orbs (vertically), clubs (both ways), horns
+  (drift diagonally) and UFOs (dive straight at you).
+- **Bonus coins** appear every 5,000 points: **B** raises the score multiplier
+  (up to ×5), **E** gives an extra life, and the rare **S** an extra life and
+  the "YOU ARE LUCKY" screen.
+- Touching an enemy when *not* frozen costs a life; you come back with brief
+  invulnerability (you blink). Lose all lives and it's game over; a high
+  enough score goes on the table under your initials.
+- While idle the title cycles through the high-score table and demos of rounds
+  1 and 2, replayed from the arcade's own recordings.
 
 ## Controls
 
-| Key            | Action                                             |
-| -------------- | -------------------------------------------------- |
-| Left / A       | Move left                                          |
-| Right / D      | Move right                                         |
-| Space          | Jump on the ground; press again in the air to stop |
-| Up / W         | In the air: half gravity (jump higher, fall slower) |
+| Key            | Action                                               |
+| -------------- | ---------------------------------------------------- |
+| Left / A       | Move left                                            |
+| Right / D      | Move right                                           |
+| Space          | Start; jump on the ground; press again in the air to stop |
+| Up / W         | In the air: half gravity (jump higher, fall slower)  |
 | Down / S       | In the air: double gravity (jump lower, fall faster) |
-| R              | Restart after game over                            |
-| Esc / Q        | Quit                                               |
+| O              | Options (from the title): start round, lives, backgrounds, … |
+| R              | Restart after game over                              |
+| Esc / Q        | Quit (Esc backs out of the options and name entry)   |
 
 The jump works like the arcade's (speeds measured from the original in MAME):
 Jack crouches for a moment, then every jump is full height — holding the button
@@ -66,22 +69,14 @@ tapping repeatedly makes him hover and sink slowly.
 
 ## Sound
 
-Music and effects are ported straight from the original Bomb Jack: jump,
-footsteps, bomb pickups, the power-ball appear/collect jingles, enemy hits and
-kills, bonus coins, level-clear, game-over and the in-game music loop. They live
-in `assets/sounds/` (`.wav` effects + `.mp3` music, the same files as the Lua
-original).
-
-No extra library is needed — playback uses SDL3's built-in audio-stream mixing,
-and MP3s are decoded with the vendored single-header [`dr_mp3.h`](src/dr_mp3.h)
-(same style as `stb_image.h`). If no audio device is available the game simply
-runs silently.
+Music and effects come from the original Bomb Jack, recorded from the arcade's
+sound commands in MAME. Playback uses SDL3's audio streams; the vendored
+[`dr_mp3.h`](src/third_party/dr_mp3.h) decodes any clip given as MP3. If no
+audio device is available the game runs silently.
 
 ## Build & run
 
 Requires **SDL3** and a C++17 compiler.
-
-### With CMake
 
 ```bash
 cmake -B build
@@ -89,35 +84,69 @@ cmake --build build
 ./build/bombjack
 ```
 
-### Quick build
+`build.sh` does the same (configuring on the first run).
 
-`build.sh` configures (first run) and builds via CMake:
+## Source layout
 
-```bash
-./build.sh
-./build/bombjack
+The simulation (`game/`) has no drawing code (it uses SDL only for its
+rectangle type) and plays sounds through `platform/audio`; the renderer
+(`render/`) only reads `Game`. Each frame, `main.cpp` turns the
+keyboard into an `Input`, runs `update()` in fixed 1/120 s steps, then calls
+`render()`.
+
+```
+src/
+  main.cpp            window and main loop
+  debug_tools.*       --selftest, --rendertest, --shot, --demotrace, --enemytrace
+  core/               shared by everything
+    constants.h         world/screen coordinates, arcade frame rate, gravity
+    color.h, geometry.h
+  game/               the simulation
+    game.*              Game struct and the state machine (update, updatePlaying)
+    round.*             round layout from the ROM tables, setup, bombs, music, clearing
+    player.*            Jack's movement, take-offs, pose, death sequence
+    enemy.*             birds, mummy schedule, chasers, contact with Jack
+    enemy_anim.cpp      the arcade's enemy animation tables and steps
+    powerball.*         Power ball, freeze, palette 14
+    bonus.*             B/E/S coins
+    effects.*           score popups and short animations
+    hiscore.*           high-score table and name entry
+    attract.*           title cycle and demo replay
+  render/             drawing
+    render.*            what to draw for each state
+    world.*             the play area
+    hud.*               top and bottom HUD strips
+    screens.*           title, table, options, bonus pages, overlays
+    palette.*           colour cycles (palettes 14 and 15, enemy eyes, …)
+    background.*        backdrops, platforms, the playfield frame, title banner
+    textures.*          textures sliced from the sprite atlas
+    sprite_atlas.h      where each sprite sits in the atlas
+    gfx.*               font, rectangles, tinted textures, coordinate switch
+    animsprite.h        frame-sequence sprite (Jack's living poses)
+  platform/
+    audio.*             sound playback, tagged channels
+    input.*             keyboard → game, per state
+  data/               generated from the ROMs and MAME captures (see tools/)
+  third_party/        stb_image.h, dr_mp3.h
+tools/                ROM data generator and MAME capture harness
 ```
 
-### Headless tests
+`updatePlaying` (in `game/game.cpp`) reads as the order of one arcade step:
+Jack moves, bombs are collected, the Power ball and bonus coin move, effects
+age, then the enemies move and meet Jack.
 
-Run the simulation with scripted input and no window (also validates that every
-sprite's pixel-map rows are rectangular):
-
-```bash
-./build/bombjack --selftest 600
-```
-
-Smoke-test the full render path (textures, tiled platforms, every game state)
-without a display — handy for CI:
+### Debug tools
 
 ```bash
-SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software ./build/bombjack --rendertest
+./build/bombjack --selftest 600                    # scripted play, no window
+SDL_VIDEODRIVER=dummy ./build/bombjack --rendertest [outdir]   # every state, BMPs to outdir
+./build/bombjack --shot 3 round3.bmp               # a round's playfield
+./build/bombjack --demotrace 1 0                   # Jack's demo path (CSV)
+./build/bombjack --enemytrace 5 3000               # enemy sprites per frame (CSV)
 ```
 
-## Layout
-
-- `src/main.cpp` — the entire game (physics, rendering, font, game states).
-- `CMakeLists.txt` / `build.sh` — build entry points.
+They seed the random generator, so their output is the same on every run and
+can be diffed before and after a change.
 
 ## Installing SDL3
 
