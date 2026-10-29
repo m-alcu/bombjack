@@ -817,11 +817,15 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     if (!oldOnGround && p.onGround) p.landing = LAND_HOLD;
     // Walking off a ledge sounds like a jump take-off on the arcade (command 0x11).
     if (oldOnGround && !p.onGround && p.vy >= 0.0f) audio::play(audio::SND_JUMP);
-    // Every take-off (jump or walking off a ledge) steps the Power ball to its
-    // next colour family, 7 wrapping to 1, and reloads palette 14 (ROM 0x23DB).
-    if (g.orb.active && oldOnGround && !p.onGround) {
-        g.orb.family = g.orb.family % 7 + 1;
-        loadPal14(g, g.orb.family);
+    // Every take-off (jump or walking off a ledge) scores 10 points times the
+    // multiplier, with no popup (ROM 0x10BE), and steps the Power ball to its
+    // next colour family, 7 wrapping to 1, reloading palette 14 (ROM 0x23DB).
+    if (oldOnGround && !p.onGround) {
+        g.score += 10 * g.multiplier;
+        if (g.orb.active) {
+            g.orb.family = g.orb.family % 7 + 1;
+            loadPal14(g, g.orb.family);
+        }
     }
 
     // Footstep loop while walking on the ground (one at a time).
