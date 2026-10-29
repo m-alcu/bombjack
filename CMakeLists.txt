@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_executable(bombjack
     src/main.cpp
+    src/debug_tools.cpp
     src/game/game.cpp
     src/game/round.cpp
     src/game/player.cpp
@@ -25,6 +26,7 @@ add_executable(bombjack
     src/render/screens.cpp
     src/render/render.cpp
     src/platform/audio.cpp
+    src/platform/input.cpp
 )
 target_include_directories(bombjack PRIVATE src)
 
