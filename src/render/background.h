@@ -27,6 +27,10 @@ void buildBackground(SDL_Renderer* ren);
 // Free all background textures (call before SDL_DestroyRenderer).
 void destroyBackground();
 
+// Clear to the backdrop colour and draw the round's background picture in
+// world coordinates. imgStyle: 0=CLASSIC, 1-7=grid sets, 8=NO background.
+void drawBackground(SDL_Renderer* r, int screen, int imgStyle);
+
 // Draw the bevelled 8-layer playfield border in screen pixels.
 void drawPlayfieldBorder(SDL_Renderer* r, int screen);
 

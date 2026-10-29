@@ -1,4 +1,6 @@
 #pragma once
+// Drawing primitives: the arcade font, filled rectangles, tinted textures,
+// and the world/screen coordinate switch.
 #include <SDL3/SDL.h>
 #include "core/color.h"
 #include "core/constants.h"
@@ -28,5 +30,11 @@ void drawTextCentered(SDL_Renderer* r, const char* t, float cx, float y, int s, 
 void useWorld(SDL_Renderer* r);
 void useScreen(SDL_Renderer* r);
 
-// 3-stage arcade colour cycle (red→yellow→blue→…), used by the GAME OVER sprite.
-Color colorCycle3(float t);
+// Draw a texture (a white mask, usually) tinted by colour-mod, optionally
+// mirrored; the convenience form takes a Color and never flips.
+void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
+                   bool flip, Uint8 cr, Uint8 cg, Uint8 cb);
+inline void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
+                          Color c) {
+    drawTexTinted(r, tex, dst, false, c.r, c.g, c.b);
+}

@@ -19,7 +19,11 @@ add_executable(bombjack
     src/render/gfx.cpp
     src/render/textures.cpp
     src/render/background.cpp
-    src/render/draw.cpp
+    src/render/palette.cpp
+    src/render/world.cpp
+    src/render/hud.cpp
+    src/render/screens.cpp
+    src/render/render.cpp
     src/platform/audio.cpp
 )
 target_include_directories(bombjack PRIVATE src)

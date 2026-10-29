@@ -273,3 +273,28 @@ void destroyBackground() {
     for (SDL_Texture*& t : g_gridTex)   dt(t);
     for (SDL_Texture*& t : g_bannerTex) dt(t);
 }
+
+void drawBackground(SDL_Renderer* r, int screen, int imgStyle) {
+    setCol(r, {18, 16, 38});
+    SDL_RenderClear(r);
+    SDL_Texture* tex = nullptr;
+    SDL_FRect src{};
+    if (imgStyle == 0 && g_bgTex && g_bgCount > 0) {
+        int idx = screen % g_bgCount;
+        if (idx < 0) idx += g_bgCount;
+        src = {(float)(idx * BG_W), 0, (float)BG_W, (float)BG_H};
+        tex = g_bgTex;
+    } else if (imgStyle >= 1 && imgStyle <= GRID_BG_COUNT) {
+        SDL_Texture* gt = g_gridTex[imgStyle - 1];
+        if (gt) {
+            int idx = ((screen % 16) + 16) % 16;
+            src = {(float)((idx % 4) * BG_W), (float)((idx / 4) * BG_H),
+                   (float)BG_W, (float)BG_H};
+            tex = gt;
+        }
+    }
+    if (tex) {
+        SDL_FRect dst{0, 0, (float)LOGW, (float)LOGH};
+        SDL_RenderTexture(r, tex, &src, &dst);
+    }
+}

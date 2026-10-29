@@ -9,7 +9,8 @@
 #include "render/textures.h"
 #include "render/background.h"
 #include "game/game.h"
-#include "render/draw.h"
+#include "render/render.h"
+#include "render/world.h"
 #include "platform/audio.h"
 
 // ---------------------------------------------------------------------------

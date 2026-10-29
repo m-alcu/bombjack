@@ -69,14 +69,10 @@ void useScreen(SDL_Renderer* r) {
     SDL_SetRenderViewport(r, nullptr);
 }
 
-Color colorCycle3(float t) {
-    const float CYCLE = 0.4f;
-    int stage = (int)(t / CYCLE);
-    float f = t / CYCLE - (float)stage;
-    Uint8 a = (Uint8)(255.0f * f), b = (Uint8)(255.0f * (1.0f - f));
-    switch (((stage % 3) + 3) % 3) {
-        case 0:  return {255, a, 0};
-        case 1:  return {b, b, a};
-        default: return {a, 0, b};
-    }
+void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
+                   bool flip, Uint8 cr, Uint8 cg, Uint8 cb) {
+    SDL_SetTextureColorMod(tex, cr, cg, cb);
+    SDL_RenderTextureRotated(r, tex, nullptr, &dst, 0.0, nullptr,
+                             flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
+    SDL_SetTextureColorMod(tex, 255, 255, 255);
 }

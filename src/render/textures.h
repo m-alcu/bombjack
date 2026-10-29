@@ -1,20 +1,8 @@
 #pragma once
+// Textures sliced from the embedded sprite atlas (sprite_atlas.h) at startup,
+// most as white masks the renderer tints.
 #include <SDL3/SDL.h>
 #include "render/gfx.h"
-
-// Enemy colour cycles, in arcade frames (main ROM 0x0705 / 0x5BF1).
-constexpr int EYE_PULSE_FRAMES   = 4;    // pen 1 (the enemies' red) level step
-constexpr int FLASH_ROT_FRAMES   = 3;    // palette 15 (flash-in) rotation step
-constexpr int FROZEN_GLINT_CYCLE = 21;   // frozen coin: pens 5 then 6 turn white
-constexpr int FROZEN_GLINT_FRAMES = 3;   //   for this long, once per cycle
-constexpr int FROZEN_BLINK_FRAMES = 56;  // last frames of a freeze: 4 on / 4 off
-
-// Red level of the enemies' pen 1 (palette 4): the arcade steps it through
-// this table, one entry every EYE_PULSE_FRAMES (main ROM 0x0705).
-constexpr Uint8 EYE_PULSE[] = {68, 136, 204, 255, 204, 136, 68, 0};
-inline Uint8 eyePulse(float t) {
-    return EYE_PULSE[(int)(t * ARCADE_HZ / EYE_PULSE_FRAMES) % (int)(sizeof(EYE_PULSE))];
-}
 
 struct Sprite { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 
@@ -57,7 +45,7 @@ extern JackVarFrame  g_jackWin[4];
 extern SDL_Texture*  g_gameOverTex;
 
 // Enemy frames indexed by arcade sprite code (atlas::ENEMY_CELLS), each with
-// its pen 1 mask (the red the arcade pulses, see eyePulse).
+// its pen 1 mask (the red the arcade pulses, see eyePulse in palette.h).
 extern SDL_Texture* g_enemyTex[256];
 extern SDL_Texture* g_enemyEye[256];
 
@@ -76,12 +64,3 @@ void buildTextures(SDL_Renderer* ren);
 
 // Free all sprite textures (call before SDL_DestroyRenderer).
 void destroyTextures();
-
-void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
-                   bool flip, Uint8 cr, Uint8 cg, Uint8 cb);
-
-// Convenience: tint with a Color (no flip). Sets the colour-mod, draws, resets.
-inline void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
-                          Color c) {
-    drawTexTinted(r, tex, dst, false, c.r, c.g, c.b);
-}

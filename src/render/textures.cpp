@@ -368,14 +368,6 @@ void buildTextures(SDL_Renderer* ren) {
     stbi_image_free(spx);
 }
 
-void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
-                   bool flip, Uint8 cr, Uint8 cg, Uint8 cb) {
-    SDL_SetTextureColorMod(tex, cr, cg, cb);
-    SDL_RenderTextureRotated(r, tex, nullptr, &dst, 0.0, nullptr,
-                             flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
-    SDL_SetTextureColorMod(tex, 255, 255, 255);
-}
-
 void destroyTextures() {
     auto dt = [](SDL_Texture*& t) { if (t) { SDL_DestroyTexture(t); t = nullptr; } };
     auto ds = [&](Sprite& s)      { dt(s.tex); };
