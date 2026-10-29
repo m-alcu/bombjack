@@ -17,6 +17,7 @@
 #include "render/sprite_atlas.h"
 #include "data/rom_pens.h"
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 

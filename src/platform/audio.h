@@ -21,8 +21,8 @@ enum Sid {
     SND_CLEAR,               // 05_Clear.wav — level cleared
     SND_SPECIAL_BONUS,       // 09_Special_Bonus.wav — special-bonus tally
     SND_GAMEOVER,            // 12_Game_Over.wav
-    SND_POWER_APPEARING,     // 08_Power_Ball_Appearing.wav — orb on screen
-    SND_GOT_POWER,           // 07_Got_a_Power_Ball.wav — orb collected
+    SND_POWER_APPEARING,     // 08_Power_Ball_Appearing.wav — Power ball on screen
+    SND_GOT_POWER,           // 07_Got_a_Power_Ball.wav — Power ball collected
     SND_TAKE_BOMB,           // take_bomb.wav — grab an unlit bomb
     SND_TAKE_EXPLODING_BOMB, // take_exploding_bomb.wav — grab the lit bomb
     SND_KILL_ENEMY,          // kill_ennemy.wav — collect a frozen enemy

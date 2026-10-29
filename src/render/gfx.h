@@ -1,6 +1,14 @@
 #pragma once
 #include <SDL3/SDL.h>
-#include "game/types.h"
+#include "core/color.h"
+#include "core/constants.h"
+#include "render/sprite_atlas.h"
+
+// Horizontal stretch correction: multiplied into sprite widths so they appear
+// square on the final 768x1024 window (1.5 vs 2.0 win-px per world unit).
+constexpr float SPRITE_AR = 4.0f / 3.0f;
+
+constexpr int FONT_ADV = 8;   // font advance per character
 
 // Build the bitmap font from the sprite atlas (called once from buildTextures).
 void buildFont(SDL_Renderer* ren, SDL_Surface* atlas);

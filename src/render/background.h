@@ -1,6 +1,18 @@
 #pragma once
 #include <SDL3/SDL.h>
-#include "game/types.h"
+#include <vector>
+#include "core/constants.h"
+
+// Classic 5-backdrop strip and optional 4x4 grid sets
+constexpr int BG_W = 224, BG_H = 224;
+
+// Title banner colour phases
+constexpr int   BANNER_PHASES = 3;
+constexpr float BANNER_ROT    = 0.05f;
+
+// Platform frame tab geometry
+constexpr int PLAT_TAB_EXT   = 3;
+constexpr int PLAT_TAB_NOTCH = 2;
 
 // Background textures (defined in background.cpp).
 extern SDL_Texture* g_bgTex;

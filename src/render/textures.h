@@ -1,7 +1,13 @@
 #pragma once
 #include <SDL3/SDL.h>
-#include "game/types.h"
 #include "render/gfx.h"
+
+// Enemy colour cycles, in arcade frames (main ROM 0x0705 / 0x5BF1).
+constexpr int EYE_PULSE_FRAMES   = 4;    // pen 1 (the enemies' red) level step
+constexpr int FLASH_ROT_FRAMES   = 3;    // palette 15 (flash-in) rotation step
+constexpr int FROZEN_GLINT_CYCLE = 21;   // frozen coin: pens 5 then 6 turn white
+constexpr int FROZEN_GLINT_FRAMES = 3;   //   for this long, once per cycle
+constexpr int FROZEN_BLINK_FRAMES = 56;  // last frames of a freeze: 4 on / 4 off
 
 // Red level of the enemies' pen 1 (palette 4): the arcade steps it through
 // this table, one entry every EYE_PULSE_FRAMES (main ROM 0x0705).

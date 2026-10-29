@@ -5,7 +5,6 @@
 #include <vector>
 
 #include "core/constants.h"
-#include "game/types.h"
 #include "render/gfx.h"
 #include "render/textures.h"
 #include "render/background.h"
@@ -36,7 +35,7 @@ static int selfTest(int steps) {
         }
     }
     std::printf("selftest ok: %d steps, score=%d lives=%d level=%d state=%d\n",
-                steps, g.score, g.lives, g.level, g.state);
+                steps, g.score, g.lives, g.round, g.state);
     return 0;
 }
 
@@ -65,7 +64,7 @@ static int renderTest() {
     Game g;
     g.rng.seed(1);
     initPlatforms(g);
-    buildJackSprite(g.jackSprite);
+    buildJackSprite();
     loadHiScores(g);
     startGame(g);
     int frames = 0;
@@ -93,8 +92,8 @@ static int shot(int level, const char* out) {
     if (!ren) { SDL_Quit(); return 1; }
     SDL_SetRenderLogicalPresentation(ren, SCREEN_W, SCREEN_H, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     buildTextures(ren); buildBackground(ren);
-    Game g; g.rng.seed(1); initPlatforms(g); buildJackSprite(g.jackSprite); loadHiScores(g);
-    g.startLevel = level; startGame(g); g.startAnim = 0.0f;
+    Game g; g.rng.seed(1); initPlatforms(g); buildJackSprite(); loadHiScores(g);
+    g.opt.firstRound = level; startGame(g); g.startAnim = 0.0f;
     render(ren, g);
     SDL_Surface* s = SDL_RenderReadPixels(ren, nullptr);
     if (s) { SDL_SaveBMP(s, out); SDL_DestroySurface(s); std::printf("shot %d -> %s\n", level, out); }
@@ -142,7 +141,7 @@ static int enemyTrace(int level, int frames) {
     Game g;
     g.rng.seed(1);
     initPlatforms(g);
-    g.startLevel = level;
+    g.opt.firstRound = level;
     startGame(g);
     g.startAnim = 0.0f;
     std::printf("frame,slot,kind,phase,code,flip,x,y\n");
@@ -217,7 +216,7 @@ int main(int argc, char** argv) {
 
     Game g;
     initPlatforms(g);
-    buildJackSprite(g.jackSprite);
+    buildJackSprite();
     loadHiScores(g);   // seeds the Godot default table on first run
 
     bool running  = true;
@@ -236,20 +235,20 @@ int main(int argc, char** argv) {
                 else if (g.state == NAMEENTRY) {
                     // High-score name entry: type A-Z / 0-9, backspace, enter.
                     if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) {
-                        if (g.hs.len < NAME_MAX)
-                            g.hs.entry[g.hs.len++] = (char)('A' + (sc - SDL_SCANCODE_A));
-                        g.hs.entry[g.hs.len] = '\0';
+                        if (g.nameEntry.len < NAME_MAX)
+                            g.nameEntry.text[g.nameEntry.len++] = (char)('A' + (sc - SDL_SCANCODE_A));
+                        g.nameEntry.text[g.nameEntry.len] = '\0';
                     } else if (sc >= SDL_SCANCODE_1 && sc <= SDL_SCANCODE_9) {
-                        if (g.hs.len < NAME_MAX)
-                            g.hs.entry[g.hs.len++] = (char)('1' + (sc - SDL_SCANCODE_1));
-                        g.hs.entry[g.hs.len] = '\0';
+                        if (g.nameEntry.len < NAME_MAX)
+                            g.nameEntry.text[g.nameEntry.len++] = (char)('1' + (sc - SDL_SCANCODE_1));
+                        g.nameEntry.text[g.nameEntry.len] = '\0';
                     } else if (sc == SDL_SCANCODE_0) {
-                        if (g.hs.len < NAME_MAX) g.hs.entry[g.hs.len++] = '0';
-                        g.hs.entry[g.hs.len] = '\0';
+                        if (g.nameEntry.len < NAME_MAX) g.nameEntry.text[g.nameEntry.len++] = '0';
+                        g.nameEntry.text[g.nameEntry.len] = '\0';
                     } else if (sc == SDL_SCANCODE_BACKSPACE) {
-                        if (g.hs.len > 0) g.hs.entry[--g.hs.len] = '\0';
+                        if (g.nameEntry.len > 0) g.nameEntry.text[--g.nameEntry.len] = '\0';
                     } else if (sc == SDL_SCANCODE_RETURN || sc == SDL_SCANCODE_KP_ENTER) {
-                        if (g.hs.len > 0) confirmNameEntry(g);
+                        if (g.nameEntry.len > 0) confirmNameEntry(g);
                     } else if (sc == SDL_SCANCODE_ESCAPE) {
                         audio::stopTag("nameentry");   // cancel: back to title
                         enterAttract(g, 0);
@@ -260,9 +259,9 @@ int main(int argc, char** argv) {
                         case SDL_SCANCODE_ESCAPE:
                             enterAttract(g, 2); break;
                         case SDL_SCANCODE_UP: case SDL_SCANCODE_W:
-                            g.optSel = (g.optSel + OPT_COUNT - 1) % OPT_COUNT; break;
+                            g.opt.sel = (g.opt.sel + OPT_COUNT - 1) % OPT_COUNT; break;
                         case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S:
-                            g.optSel = (g.optSel + 1) % OPT_COUNT; break;
+                            g.opt.sel = (g.opt.sel + 1) % OPT_COUNT; break;
                         case SDL_SCANCODE_LEFT: case SDL_SCANCODE_A:
                             optionAdjust(g, -1); break;
                         case SDL_SCANCODE_RIGHT: case SDL_SCANCODE_D:
@@ -281,7 +280,7 @@ int main(int argc, char** argv) {
                     }
                     if (sc == SDL_SCANCODE_O && attract) {
                         stopDemo(g);
-                        g.optSel = 0;
+                        g.opt.sel = 0;
                         g.state  = OPTIONS;
                     }
                     if (sc == SDL_SCANCODE_R && g.state == GAMEOVER) startGame(g);

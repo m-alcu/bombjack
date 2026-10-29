@@ -1,5 +1,12 @@
 #pragma once
-#include "core/constants.h"
+
+// Cell sizes of sprites in the atlas, in screen pixels.
+constexpr int SIZE_16PX  = 16;                       // most sprites are 16x16 or 16xN
+constexpr int JACK_FH    = 15;                       // Jack's living frames
+constexpr int INIT_FW    = 33, INIT_FH    = 32;      // spawn flash
+constexpr int GAMEOVER_W = 34, GAMEOVER_H = 28;      // "GAME OVER"
+constexpr int BANNER_W   = 192, BANNER_H  = 80;      // title banner
+constexpr int FONT_W     = 7,  FONT_H     = 7;       // font glyph
 
 // ---------------------------------------------------------------------------
 // Atlas layout: where every sprite lives inside sprites_full_png.

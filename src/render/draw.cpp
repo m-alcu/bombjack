@@ -10,6 +10,24 @@
 #include <cstdio>
 #include <cstring>
 
+// On-screen draw size of the living Jack sprite.
+constexpr float JACK_DRAW_W = 26.0f * SPRITE_AR;
+constexpr float JACK_DRAW_H = 28.0f;
+constexpr float JACK_WALK_FRAME = 0.125f;
+
+constexpr float BOMB_HALF_W = 6.0f * (float)LOGW / (float)GAME_W;
+constexpr float BOMB_HALF_H = 8.0f * (float)LOGH / (float)GAME_H;
+
+constexpr float BONUSTAKEN_SCALE = 1.8f;
+
+// Round-clear victory dance
+constexpr int   VICTORY_STEPS = 16;
+constexpr float VICTORY_FRAME = CLEAR_TIME / VICTORY_STEPS;
+constexpr int VICTORY_SEQ[VICTORY_STEPS] = {
+    JW_NORMAL, JW_LEFT, JW_NORMAL, JW_RIGHT, JW_NORMAL, JW_UP, JW_NORMAL, JW_UP,
+    JW_NORMAL, JW_LEFT, JW_NORMAL, JW_RIGHT, JW_NORMAL, JW_UP, JW_NORMAL, JW_UP,
+};
+
 void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
     const float dw = BOMB_HALF_W * 2.0f;
     const float dh = BOMB_HALF_H * 2.0f;
@@ -21,10 +39,16 @@ void drawBomb(SDL_Renderer* r, const Bomb& b, bool lit, float t) {
     }
 }
 
-// Populate the player's owned AnimSprite with its living poses. Called once at
-// startup (after buildTextures), since the frame textures must already exist.
-// Walking is a 4-frame loop per direction; the other states are single poses.
-void buildJackSprite(AnimSprite& jack) {
+// Jack's living poses, indexed by JackPose. Built once at startup (after
+// buildTextures), since the frame textures must already exist. Walking is a
+// 4-frame loop per direction; the other states are single poses.
+static AnimSprite s_jack;
+static const char* const JACK_ANIM[] = {
+    "idle", "walk_l", "walk_r", "fly", "fly_l", "fly_r", "fall", "fall_l", "fall_r",
+};
+
+void buildJackSprite() {
+    AnimSprite& jack = s_jack;
     jack.setSize(JACK_DRAW_W, JACK_DRAW_H);
     auto single = [](int f) {
         AnimSprite::Animation a;
@@ -48,8 +72,7 @@ void buildJackSprite(AnimSprite& jack) {
     jack.addAnimation("walk_r", walk(JF_WALK_R0));
 }
 
-void drawPlayer(SDL_Renderer* r, const Player& p, const AnimSprite& jack,
-                float t, bool dying, int deathPhase, int deathFrame,
+void drawPlayer(SDL_Renderer* r, const Player& p, float t, bool dying, int deathPhase, int deathFrame,
                 bool frozen, const Color pal14[8]) {
     if (dying) {
         const JackVarFrame* fr = nullptr;
@@ -86,9 +109,12 @@ void drawPlayer(SDL_Renderer* r, const Player& p, const AnimSprite& jack,
             if (g_jackPen[f][k]) drawTexTinted(r, g_jackPen[f][k], dst, pal14[k]);
         return;
     }
-    // Normal living Jack: pose, position and animation clock were set on the
-    // owned AnimSprite during the simulation step (see driveJack in game.cpp).
-    jack.draw(r);
+    // Normal living Jack: the simulation picked the pose and its clock
+    // (updateJackPose).
+    s_jack.play(JACK_ANIM[p.pose]);
+    s_jack.setClock(p.poseTime);
+    s_jack.setPosition(p.x + PW / 2.0f, p.y + PH - JACK_DRAW_H / 2.0f);
+    s_jack.draw(r);
 }
 
 void drawJackVictory(SDL_Renderer* r, const Player& p, float clearTimer) {
@@ -151,7 +177,7 @@ void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
 }
 
 // The Power ball (sprite 0x3D) is drawn in palette 14 too, pen by pen.
-void drawPowerOrb(SDL_Renderer* r, float x, float y, const Color pal14[8]) {
+void drawPowerBall(SDL_Renderer* r, float x, float y, const Color pal14[8]) {
     const float w = 32.0f * SPRITE_AR, h = 32.0f;
     SDL_FRect dst{x - w / 2, y - h / 2, w, h};
     for (int k = 1; k < 8; ++k)
@@ -236,9 +262,9 @@ static Color hudRot(const Color (&table)[N], int step, int offset) {
 // The box frame is pen 7, its glyphs pen 1 and the power bar bands pens 6
 // down to 2.
 static Color pal14Pen(const Game& g, int pen) {
-    const int step = std::max(0, (int)((g.time - g.pal14Time) * ARCADE_HZ / HUD_ROT_FRAMES));
-    if (g.pal14 >= 1 && g.pal14 <= 7)
-        return xbgr444(PAL14_FAMILY[g.pal14 - 1][(step + pen - 1) % 8]);
+    const int step = std::max(0, (int)((g.time - g.pal14.loadedAt) * ARCADE_HZ / HUD_ROT_FRAMES));
+    if (g.pal14.table >= 1 && g.pal14.table <= 7)
+        return xbgr444(PAL14_FAMILY[g.pal14.table - 1][(step + pen - 1) % 8]);
     return xbgr444(PAL14_RAINBOW[(step + pen - 1) % (int)std::size(PAL14_RAINBOW)]);
 }
 
@@ -247,7 +273,7 @@ static Color pal14Pen(const Game& g, int pen) {
 // 2 power units (20 = full, as it shows while the Power ball is up or the
 // freeze lasts), each 4 px band k in pen 6-k, so colour ripples outward.
 static void drawMultiplierAndPower(SDL_Renderer* r, const Game& g) {
-    const bool powerUp = g.orb.active || g.freezeTimer > 0.0f;
+    const bool powerUp = g.ball.active || g.freezeTimer > 0.0f;
 
     const int units = std::clamp((int)(g.powerMeter * 2.0f + 0.001f), 0, 20);  // arcade 0..20
     const int barW  = powerUp ? 20 : 2 * (units / 2);
@@ -297,7 +323,7 @@ void drawHud(SDL_Renderer* r, const Game& g) {
     }
 
     drawTextCentered(r, "ROUND", 132, l1, 1, {80, 230, 90});
-    std::snprintf(buf, sizeof(buf), "-%d-", g.level);
+    std::snprintf(buf, sizeof(buf), "-%d-", g.round);
     drawTextCentered(r, buf, 132, l2, 1, {0, 139, 255});
 
     drawTextCentered(r, "HI-SCORE", 192, l1, 1, {255, 230, 60});
@@ -347,11 +373,11 @@ void drawSpecialBonus(SDL_Renderer* r, const Game& g) {
     setCol(r, {0, 0, 28}); fillR(r, x, y, w, h);
     char buf[40];
     drawTextCentered(r, "YOU'VE GOTTEN", cx, y + 14, 1, {255, 230, 60});
-    std::snprintf(buf, sizeof(buf), "%d FIRE BOMBS", g.sb.catched);
+    std::snprintf(buf, sizeof(buf), "%d FIRE BOMBS", g.special.fireBombs);
     drawTextCentered(r, buf, cx, y + 30, 1, hl);
     drawTextCentered(r, "SPECIAL BONUS", cx, y + 54, 1, {255, 255, 255});
-    if (g.sb.remaining > 0) {
-        std::snprintf(buf, sizeof(buf), "%d PTS", g.sb.remaining);
+    if (g.special.remaining > 0) {
+        std::snprintf(buf, sizeof(buf), "%d PTS", g.special.remaining);
         drawTextCentered(r, buf, cx, y + 70, 1, hl);
     }
 }
@@ -424,13 +450,13 @@ void drawHiScores(SDL_Renderer* r, const Game& g) {
     const Color base = {220, 220, 230};
     char buf[24];
     for (int d = 0; d < HISCORE_COUNT; ++d) {
-        const bool isEdit = editing && d == g.hs.rank;
+        const bool isEdit = editing && d == g.nameEntry.rank;
         // During editing the pending entry is injected at its rank, pushing the
         // rows below it down one place (the last stored entry drops off).
         int score, level; const char* name;
-        if (isEdit)                       { score = g.score;         level = g.level;         name = g.hs.entry; }
-        else if (editing && d > g.hs.rank){ score = g.hi[d-1].score; level = g.hi[d-1].level; name = g.hi[d-1].name; }
-        else                              { score = g.hi[d].score;   level = g.hi[d].level;   name = g.hi[d].name; }
+        if (isEdit)                       { score = g.score;         level = g.round;         name = g.nameEntry.text; }
+        else if (editing && d > g.nameEntry.rank){ score = g.hiscores[d-1].score; level = g.hiscores[d-1].round; name = g.hiscores[d-1].name; }
+        else                              { score = g.hiscores[d].score;   level = g.hiscores[d].round;   name = g.hiscores[d].name; }
 
         // Attract loop colour-cycles the top score/round; editing cycles the frame.
         Color hot = (!editing && d == 0) ? colorCycle3(g.time) : base;
@@ -448,11 +474,11 @@ void drawHiScores(SDL_Renderer* r, const Game& g) {
             }
             // Typed chars at the normal font advance (1px gap, like the table),
             // plus a blinking caret in the next slot.
-            for (int k = 0; k < g.hs.len; ++k)
-                drawChar(r, g.hs.entry[k], nameX + k * FONT_ADV, y, 1, {255, 255, 255});
-            if (g.hs.len < NAME_MAX && std::fmod(g.time, 0.6f) < 0.3f) {
+            for (int k = 0; k < g.nameEntry.len; ++k)
+                drawChar(r, g.nameEntry.text[k], nameX + k * FONT_ADV, y, 1, {255, 255, 255});
+            if (g.nameEntry.len < NAME_MAX && std::fmod(g.time, 0.6f) < 0.3f) {
                 setCol(r, {255, 255, 255});
-                fillR(r, nameX + g.hs.len * FONT_ADV, y + FONT_H - 1, FONT_W, 1.5f);
+                fillR(r, nameX + g.nameEntry.len * FONT_ADV, y + FONT_H - 1, FONT_W, 1.5f);
             }
         } else {
             drawText(r, name[0] ? name : "...", nameX, y, 1, base);
@@ -485,7 +511,7 @@ void drawOptions(SDL_Renderer* r, const Game& g) {
                                      "S BONUS", "100K START"};
     const float rowY0 = HUD_H + 80;
     for (int i = 0; i < OPT_COUNT; ++i) {
-        bool sel = (g.optSel == i);
+        bool sel = (g.opt.sel == i);
         Color c = sel ? Color{255, 255, 255} : Color{150, 150, 170};
         float y = rowY0 + i * 18;
         if (sel) {
@@ -495,11 +521,11 @@ void drawOptions(SDL_Renderer* r, const Game& g) {
         }
         drawText(r, labels[i], 28, y, 1, c);
         char vbuf[24];
-        if (i == 0)      std::snprintf(vbuf, sizeof(vbuf), "%d", g.startLevel);
-        else if (i == 1) std::snprintf(vbuf, sizeof(vbuf), "%d", g.startLives);
-        else if (i == 2) std::snprintf(vbuf, sizeof(vbuf), "%s", imgNames[g.imgStyle]);
-        else if (i == 3) std::snprintf(vbuf, sizeof(vbuf), "%s", g.alwaysS ? "ON" : "OFF");
-        else             std::snprintf(vbuf, sizeof(vbuf), "%s", g.start100k ? "ON" : "OFF");
+        if (i == 0)      std::snprintf(vbuf, sizeof(vbuf), "%d", g.opt.firstRound);
+        else if (i == 1) std::snprintf(vbuf, sizeof(vbuf), "%d", g.opt.lives);
+        else if (i == 2) std::snprintf(vbuf, sizeof(vbuf), "%s", imgNames[g.opt.imgStyle]);
+        else if (i == 3) std::snprintf(vbuf, sizeof(vbuf), "%s", g.opt.alwaysS ? "ON" : "OFF");
+        else             std::snprintf(vbuf, sizeof(vbuf), "%s", g.opt.start100k ? "ON" : "OFF");
         drawText(r, vbuf, 150, y, 1, c);
     }
 
@@ -545,7 +571,7 @@ void render(SDL_Renderer* r, const Game& g) {
         setCol(r, {0, 0, 0});
         SDL_RenderClear(r);
         // Attract loop alternates the banner with the high-score table.
-        if (g.hs.showTable) {
+        if (g.attract.showTable) {
             drawHiScores(r, g);
             drawHud(r, g);
             return;
@@ -573,7 +599,7 @@ void render(SDL_Renderer* r, const Game& g) {
         return;
     }
 
-    drawBackground(r, currentScreen(g), g.imgStyle);
+    drawBackground(r, currentScreen(g), g.opt.imgStyle);
 
     // Horizontals first, then vertical girders (so girder miter draws on top).
     for (int pass = 0; pass < 2; ++pass) {
@@ -609,7 +635,7 @@ void render(SDL_Renderer* r, const Game& g) {
 
     Color pal14[8];
     for (int k = 1; k < 8; ++k) pal14[k] = pal14Pen(g, k);
-    if (g.orb.active) drawPowerOrb(r, g.orb.x, g.orb.y, pal14);
+    if (g.ball.active) drawPowerBall(r, g.ball.x, g.ball.y, pal14);
 
     if (g.bonus.active) {
         const Sprite* set = g.bonus.kind == BK_E ? g_bonusE
@@ -646,7 +672,7 @@ void render(SDL_Renderer* r, const Game& g) {
     if (g.state == ROUNDCLEAR)
         drawJackVictory(r, g.p, g.clearTimer);
     else if (g.state != GAMEOVER)
-        drawPlayer(r, g.p, g.jackSprite, g.time, g.death.active, g.death.phase,
+        drawPlayer(r, g.p, g.time, g.death.active, g.death.phase,
                    g.death.frame, frozen, pal14);
 
     useScreen(r);
@@ -665,7 +691,7 @@ void render(SDL_Renderer* r, const Game& g) {
 
     char buf[64];
     if (g.state == ROUNDCLEAR) {
-        std::snprintf(buf, sizeof(buf), "ROUND %d CLEAR!", g.level);
+        std::snprintf(buf, sizeof(buf), "ROUND %d CLEAR!", g.round);
         drawTextCentered(r, buf, LOGW / 2.0f, LOGH / 2.0f - 10, 3, {120, 255, 140});
     }
 
@@ -673,7 +699,7 @@ void render(SDL_Renderer* r, const Game& g) {
     drawStartIntro(r, g);
     if (g.state == GAMEOVER && g_gameOverTex) {
         Color c = colorCycle3(g.time);
-        const SDL_FRect dst{g.go.x - GAMEOVER_W / 2.0f, g.go.y - GAMEOVER_H / 2.0f,
+        const SDL_FRect dst{g.gameOver.x - GAMEOVER_W / 2.0f, g.gameOver.y - GAMEOVER_H / 2.0f,
                             (float)GAMEOVER_W, (float)GAMEOVER_H};
         drawTexTinted(r, g_gameOverTex, dst, false, c.r, c.g, c.b);
     }

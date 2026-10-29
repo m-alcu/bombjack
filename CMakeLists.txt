@@ -7,7 +7,15 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_executable(bombjack
     src/main.cpp
     src/game/game.cpp
+    src/game/round.cpp
+    src/game/player.cpp
     src/game/enemy.cpp
+    src/game/enemy_anim.cpp
+    src/game/powerball.cpp
+    src/game/bonus.cpp
+    src/game/effects.cpp
+    src/game/hiscore.cpp
+    src/game/attract.cpp
     src/render/gfx.cpp
     src/render/textures.cpp
     src/render/background.cpp
