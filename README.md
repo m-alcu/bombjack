@@ -70,9 +70,8 @@ tapping repeatedly makes him hover and sink slowly.
 ## Sound
 
 Music and effects come from the original Bomb Jack, recorded from the arcade's
-sound commands in MAME. Playback uses SDL3's audio streams; the vendored
-[`dr_mp3.h`](src/third_party/dr_mp3.h) decodes any clip given as MP3. If no
-audio device is available the game runs silently.
+sound commands in MAME, as WAV files loaded and mixed with SDL3's audio
+streams. If no audio device is available the game runs silently.
 
 ## Build & run
 
@@ -127,7 +126,7 @@ src/
     audio.*             sound playback, tagged channels
     input.*             keyboard → game, per state
   data/               generated from the ROMs and MAME captures (see tools/)
-  third_party/        stb_image.h, dr_mp3.h
+  third_party/        stb_image.h
 tools/                ROM data generator and MAME capture harness
 ```
 

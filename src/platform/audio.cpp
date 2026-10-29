@@ -7,9 +7,6 @@
 #include <string>
 #include <vector>
 
-#define DR_MP3_IMPLEMENTATION
-#include "third_party/dr_mp3.h"  // keep STDIO enabled for drmp3_open_file_and_read_pcm_frames_f32
-
 namespace audio {
 namespace {
 
@@ -118,33 +115,9 @@ std::string resolvePath(const char* name) {
     return candidates[0];  // report the primary path in the load error
 }
 
-bool endsWith(const char* s, const char* suffix) {
-    size_t ls = std::strlen(s), lx = std::strlen(suffix);
-    return ls >= lx && std::strcmp(s + ls - lx, suffix) == 0;
-}
-
 bool loadClip(Sid id) {
     std::string path = resolvePath(kFile[id]);
     Clip& c = g_clips[id];
-
-    if (endsWith(kFile[id], ".mp3")) {
-        drmp3_config    cfg{};
-        drmp3_uint64    frames = 0;
-        float* pcm = drmp3_open_file_and_read_pcm_frames_f32(
-            path.c_str(), &cfg, &frames, nullptr);
-        if (!pcm) {
-            std::fprintf(stderr, "audio: failed to decode %s\n", path.c_str());
-            return false;
-        }
-        c.spec.format   = SDL_AUDIO_F32;
-        c.spec.channels = (int)cfg.channels;
-        c.spec.freq     = (int)cfg.sampleRate;
-        c.len = (Uint32)(frames * cfg.channels * sizeof(float));
-        c.buf = (Uint8*)SDL_malloc(c.len);
-        if (c.buf) std::memcpy(c.buf, pcm, c.len);
-        drmp3_free(pcm, nullptr);
-        return c.buf != nullptr;
-    }
 
     // WAV via SDL — buffer comes back SDL_malloc'd, matching our free path.
     if (!SDL_LoadWAV(path.c_str(), &c.spec, &c.buf, &c.len)) {
