@@ -2,6 +2,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 #include "constants.h"
 #include "types.h"
@@ -100,8 +101,59 @@ static int shot(int level, const char* out) {
     return 0;
 }
 
+// Replay a demo recording headless and print Jack's position after each arcade
+// frame in arcade pixels, plus each bomb pickup (debug tool, for comparing
+// against the arcade in MAME). `cycle` parity picks recording A or B.
+static int demoTrace(int round, int cycle) {
+    Game g;
+    g.attract.cycle = cycle;
+    startDemo(g, round);
+    const float x0 = g.p.x, y0 = g.p.y;
+    const float dt = 1.0f / 120.0f;
+    int last = -1;
+    std::printf("frame,bits,x,y,bombsLeft\n");
+    std::vector<bool> had(g.bombs.size(), false);
+    for (int i = 0; i < 120 * 120 && g.demo.active; ++i) {
+        update(g, Input{}, dt);
+        for (size_t b = 0; b < g.bombs.size() && b < had.size(); ++b)
+            if (g.bombs[b].collected && !had[b]) {
+                had[b] = true;
+                std::printf("# bomb %zu at frame %d\n", b, g.demo.frame);
+            }
+        if (g.demo.frame != last) {
+            last = g.demo.frame;
+            std::printf("%d,%d,%.2f,%.2f,%d\n", g.demo.frame, g.demo.bits,
+                        120.0f + (g.p.x - x0) / PX_TO_WU_X,
+                        120.0f + (g.p.y - y0) / PX_TO_WU_Y, g.bombsLeft);
+        }
+    }
+    return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
+// Play a level headless at the arcade frame rate with an untouchable, idle
+// Jack and print every enemy's sprite each frame (debug tool, for comparing
+// enemy animation against the arcade in MAME).
+static int enemyTrace(int level, int frames) {
+    Game g;
+    initPlatforms(g);
+    g.startLevel = level;
+    startGame(g);
+    g.startAnim = 0.0f;
+    std::printf("frame,slot,kind,phase,code,flip,x,y\n");
+    for (int f = 0; f < frames; ++f) {
+        g.p.invuln = 1.0f;
+        update(g, Input{}, 1.0f / ARCADE_HZ);
+        for (size_t i = 0; i < g.enemies.size(); ++i) {
+            const Enemy& e = g.enemies[i];
+            std::printf("%d,%zu,%d,%d,%02x,%d,%.1f,%.1f\n", f, i, e.kind, e.phase,
+                        e.code, e.flip, e.x, e.y);
+        }
+    }
+    return 0;
+}
+
 // ---------------------------------------------------------------------------
 int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
@@ -109,6 +161,12 @@ int main(int argc, char** argv) {
             return selfTest(i + 1 < argc ? std::atoi(argv[i + 1]) : 600);
         if (std::strcmp(argv[i], "--rendertest") == 0)
             return renderTest();
+        if (std::strcmp(argv[i], "--demotrace") == 0)
+            return demoTrace(i + 1 < argc ? std::atoi(argv[i + 1]) : 1,
+                             i + 2 < argc ? std::atoi(argv[i + 2]) : 0);
+        if (std::strcmp(argv[i], "--enemytrace") == 0)
+            return enemyTrace(i + 1 < argc ? std::atoi(argv[i + 1]) : 1,
+                              i + 2 < argc ? std::atoi(argv[i + 2]) : 3000);
         if (std::strcmp(argv[i], "--shot") == 0)
             return shot(i+1 < argc ? std::atoi(argv[i+1]) : 1, i+2 < argc ? argv[i+2] : "shot.bmp");
     }
@@ -190,15 +248,13 @@ int main(int argc, char** argv) {
                         if (g.hs.len > 0) confirmNameEntry(g);
                     } else if (sc == SDL_SCANCODE_ESCAPE) {
                         audio::stopTag("nameentry");   // cancel: back to title
-                        g.hs.showTable  = true;
-                        g.hs.flashTimer = 0.0f;
-                        g.state = TITLE;
+                        enterAttract(g, 0);
                     }
                 }
                 else if (g.state == OPTIONS) {
                     switch (sc) {
                         case SDL_SCANCODE_ESCAPE:
-                            g.state = TITLE; break;
+                            enterAttract(g, 2); break;
                         case SDL_SCANCODE_UP: case SDL_SCANCODE_W:
                             g.optSel = (g.optSel + OPT_COUNT - 1) % OPT_COUNT; break;
                         case SDL_SCANCODE_DOWN: case SDL_SCANCODE_S:
@@ -213,11 +269,14 @@ int main(int argc, char** argv) {
                     }
                 } else {
                     if (sc == SDL_SCANCODE_ESCAPE) running = false;
+                    // The attract cycle (title screens and demo) waits for start.
+                    const bool attract = g.state == TITLE || g.demo.active;
                     if (sc == SDL_SCANCODE_SPACE) {
-                        if (g.state == TITLE) startGame(g);
+                        if (attract) startGame(g);
                         else jumpEdge = true;
                     }
-                    if (sc == SDL_SCANCODE_O && g.state == TITLE) {
+                    if (sc == SDL_SCANCODE_O && attract) {
+                        stopDemo(g);
                         g.optSel = 0;
                         g.state  = OPTIONS;
                     }

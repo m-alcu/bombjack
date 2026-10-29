@@ -43,6 +43,7 @@ struct Channel {
 };
 
 bool             g_ok = false;
+bool             g_muted = false;
 SDL_AudioDeviceID g_dev = 0;
 SDL_AudioSpec    g_devSpec{};
 Clip             g_clips[SND_COUNT];
@@ -52,12 +53,14 @@ std::vector<Channel> g_channels;
 const char* kFile[SND_COUNT] = {
     "jump.wav",
     "walking.wav",
-    "11_Touched_an_Enemy.mp3",
-    "05_Clear.mp3",
-    "09_Special_Bonus.mp3",
-    "12_Game_Over.mp3",
-    "08_Power_Ball_Appearing.mp3",
-    "07_Got_a_Power_Ball.mp3",
+    // Melodies: recorded from the arcade's sound board in MAME (command in
+    // brackets), DC-filtered, one common gain. Loops are cut to one exact period.
+    "11_Touched_an_Enemy.wav",       // [0x27]
+    "05_Clear.wav",                  // [0x25]
+    "09_Special_Bonus.wav",          // [0x2B]
+    "12_Game_Over.wav",              // [0x26]
+    "08_Power_Ball_Appearing.wav",   // [0x1B]
+    "07_Got_a_Power_Ball.wav",       // [0x1A]
     "take_bomb.wav",
     "take_exploding_bomb.wav",
     "kill_ennemy.wav",
@@ -65,26 +68,36 @@ const char* kFile[SND_COUNT] = {
     "mummy_fall.wav",
     "coin_bounce.wav",
     "take_bonus.wav",
-    "04 Got a Special Coin.wav",
-    "03_Ringo_no_Mori_no_Koneko_Tachi_BGM_1.mp3",
-    "06_BGM_2.mp3",
-    "10_Lady_Madonna_BGM3.mp3",
-    "01 Title.wav",
-    "13_Name_Entry_1.mp3",
+    "04 Got a Special Coin.wav",                   // [0x28]
+    "03_Ringo_no_Mori_no_Koneko_Tachi_BGM_1.wav",  // [0x23]
+    "06_BGM_2.wav",                                // [0x22]
+    "10_Lady_Madonna_BGM3.wav",                    // [0x24]
+    "01 Title.wav",                                // [0x20]
+    "13_Name_Entry_1.wav",                         // [0x29]
     // Recorded from the arcade's sound board in MAME (sound commands 0x17,
     // 0x2D, 0x14; coin_bounce.wav is 0x1D), DC-filtered and level-matched.
     "mummy_land.wav",
     "mummy_transform.wav",
     "jack_death_fall.wav",
+    "14 Name Entry 2.wav",                         // [0x2A]
 };
 
-// The Power-ball tone is a pitch sweep the arcade repeats every 1.385 s, but the
-// recording slows down after its first sweep and fades out, so looping the whole
-// file wobbles and dips. Loop only its first sweep (1.367 s, matched against the
-// arcade in MAME) with a 20 ms crossfade.
+// Loop regions of the looping melodies: one period of the arcade tune as measured
+// in MAME, after its intro (BGM 1 and BGM 2 open with a ~3 s intro that is not
+// repeated). A short crossfade hides the sound chips' phase at the seam.
 const LoopSpec kLoop[SND_COUNT] = {
-    {}, {}, {}, {}, {}, {},
-    {0.1f, 1.46689f, 0.02f},   // SND_POWER_APPEARING
+    {}, {}, {}, {},
+    {1.0f, 17.22292f, 0.015f},  // SND_SPECIAL_BONUS
+    {},
+    {1.0f, 16.20650f, 0.015f},  // SND_POWER_APPEARING (10 sweeps of 1.52 s)
+    {}, {}, {}, {}, {}, {}, {}, {}, {},
+    {5.0f, 39.06404f, 0.015f},  // SND_MUSIC
+    {5.0f, 48.25654f, 0.015f},  // SND_MUSIC_2
+    {1.0f, 39.92708f, 0.015f},  // SND_MUSIC_3
+    {},
+    {1.0f, 28.57256f, 0.015f},  // SND_NAME_ENTRY
+    {}, {}, {},
+    {1.0f, 13.97254f, 0.015f},  // SND_NAME_ENTRY_2
 };
 
 #ifndef ASSET_ROOT
@@ -142,12 +155,24 @@ bool loadClip(Sid id) {
     return true;
 }
 
-// Build a clip's crossfaded loop buffer from its kLoop region (F32 clips only,
-// i.e. the decoded MP3s).
+// Build a clip's crossfaded loop buffer from its kLoop region. The clip is
+// converted to F32 first if it was loaded in another format.
 void buildLoop(Sid id) {
     const LoopSpec& ls = kLoop[id];
     Clip& c = g_clips[id];
-    if (ls.end <= ls.start || !c.buf || c.spec.format != SDL_AUDIO_F32) return;
+    if (ls.end <= ls.start || !c.buf) return;
+    if (c.spec.format != SDL_AUDIO_F32) {
+        SDL_AudioSpec f32 = c.spec;
+        f32.format = SDL_AUDIO_F32;
+        Uint8* conv = nullptr;
+        int    convLen = 0;
+        if (!SDL_ConvertAudioSamples(&c.spec, c.buf, (int)c.len, &f32, &conv, &convLen))
+            return;
+        SDL_free(c.buf);
+        c.buf  = conv;
+        c.len  = (Uint32)convLen;
+        c.spec = f32;
+    }
     const int    chans  = c.spec.channels;
     const Uint32 frames = c.len / (Uint32)(chans * sizeof(float));
     const Uint32 s = (Uint32)(ls.start * c.spec.freq);
@@ -238,7 +263,7 @@ void shutdown() {
 }
 
 void play(Sid id, const char* tag, bool loop, void (*onFinished)(), float gain) {
-    if (!g_ok || id < 0 || id >= SND_COUNT || !g_clips[id].buf) return;
+    if (!g_ok || g_muted || id < 0 || id >= SND_COUNT || !g_clips[id].buf) return;
 
     SDL_AudioStream* s = SDL_CreateAudioStream(&g_clips[id].spec, &g_devSpec);
     if (!s) return;
@@ -279,6 +304,8 @@ void update() {
         if (cb) cb();  // after erase: callback may enqueue new channels
     }
 }
+
+void setMuted(bool muted) { g_muted = muted; }
 
 void stopTag(const char* tag) {
     if (!g_ok || !tag) return;

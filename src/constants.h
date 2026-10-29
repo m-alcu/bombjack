@@ -35,6 +35,7 @@ constexpr float JUMP_VEL    = -(810.0f / 256.0f) * ARCADE_HZ * PX_TO_WU_Y;  // l
 constexpr float GRAVITY     = (10.0f / 256.0f) * ARCADE_HZ * ARCADE_HZ * PX_TO_WU_Y;
 constexpr float MAXFALL     = (810.0f / 256.0f) * ARCADE_HZ * PX_TO_WU_Y;   // fall-speed cap
 constexpr float JUMP_CROUCH = 8.0f / ARCADE_HZ;   // crouch before take-off
+constexpr float LAND_HOLD   = 8.0f / ARCADE_HZ;   // no walking just after landing
 constexpr float GRAV_UP     = 0.5f;   // Up held in the air: half gravity
 constexpr float GRAV_DOWN   = 2.0f;   // Down held in the air: double gravity
 // Bomb pickup: |dx| < 10 px and |dy| < 8 px between Jack's and the bomb's centres.
@@ -84,14 +85,15 @@ constexpr float DEATH_PLF_TOTAL  = 1.0f;
 constexpr float DEATH_DEAD_TOTAL = 1.0f;
 constexpr float DEATH_WAIT_TIME  = 3.0f;
 constexpr int KILL_POINTS[]  = {100, 200, 300, 500, 800, 1200, 2000};
-constexpr int POWER_POINTS[] = {100, 200, 300, 500, 800, 1000, 2000};
+constexpr int POWER_POINTS[] = {100, 200, 300, 500, 800, 1200, 2000};   // by family (ROM 0x2F7E)
 
 // Mummy lifecycle
 constexpr float MUMMY_HALF_H        = 14.0f;
 constexpr float MUMMY_DROP_GAP      = 8.0f;
-constexpr float INIT_ENEMY_TIME     = 0.6f;
-constexpr float MUMMY_APPEAR_TIME   = 1.1f;
-constexpr float MUMMY_DISAPPEAR_TIME= 0.5f;
+// Flash-in (0xBC-0xBF, 6 frames each), also played when a mummy transforms,
+// then 30 frames standing before it walks (main ROM 0x321D / 0x3266).
+constexpr float INIT_ENEMY_TIME     = 24.0f / ARCADE_HZ;
+constexpr float MUMMY_APPEAR_TIME   = 30.0f / ARCADE_HZ;
 constexpr float MUMMY_SPAWN_DELAY   = 3.6f;
 constexpr float MUMMY_WALK_SPEED    = 70.0f;
 constexpr float FLY_SPEED           = 120.0f;
@@ -121,15 +123,17 @@ constexpr int VICTORY_SEQ[VICTORY_STEPS] = {
 
 // Bird enemy
 constexpr int   BIRD_DECIDE_FRAMES = 250;
-constexpr float BIRD_FLAP_FRAME = 0.1f;
-constexpr float BIRD_PULSE_STEP = 0.06f;
 constexpr float BIRD_SPAWN_L = 60.0f;
 constexpr float BIRD_SPAWN_R = LOGW - 60.0f;
 constexpr float BIRD_SPAWN_T = 70.0f;
 constexpr float BIRD_SPAWN_B = LOGH - 90.0f;
 
-// Mummy sprite size
-constexpr float MUMMY_WALK_FRAME = 0.1f;
+// Enemy colour cycles, in arcade frames (main ROM 0x0705 / 0x5BF1).
+constexpr int EYE_PULSE_FRAMES   = 4;    // pen 1 (the enemies' red) level step
+constexpr int FLASH_ROT_FRAMES   = 3;    // palette 15 (flash-in) rotation step
+constexpr int FROZEN_GLINT_CYCLE = 21;   // frozen coin: pens 5 then 6 turn white
+constexpr int FROZEN_GLINT_FRAMES = 3;   //   for this long, once per cycle
+constexpr int FROZEN_BLINK_FRAMES = 56;  // last frames of a freeze: 4 on / 4 off
 
 // Spawn flash cell size
 constexpr int INIT_FW = 33, INIT_FH = 32;
@@ -163,4 +167,7 @@ constexpr int OPT_IMG_STYLES = GRID_BG_COUNT + 2;  // CLASSIC + 7 grids + NO
 // High-score table (name entry + display), mirroring the Godot game.
 constexpr int   HISCORE_COUNT    = 10;
 constexpr int   NAME_MAX         = 3;     // 3 initials fit the frame hole at 1px gaps
-constexpr float TITLE_FLASH_TIME = 5.0f;  // title alternates banner/table
+// Attract cycle and demo timings, in arcade frames measured in MAME.
+constexpr float ATTRACT_TABLE_TIME  = 305.0f / ARCADE_HZ;  // high-score table
+constexpr float ATTRACT_BANNER_TIME = 603.0f / ARCADE_HZ;  // banner + title tune
+constexpr float DEMO_START_WAIT     = 30.0f / ARCADE_HZ;   // still frames before replay

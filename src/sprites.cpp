@@ -15,21 +15,20 @@
 #include "sprites_full_png.h"
 #include "sprites.h"
 #include "sprite_atlas.h"
+#include "rom_pens.h"
 #include <algorithm>
 #include <cstring>
 #include <vector>
 
 // Global sprite storage (defined here, declared extern in sprites.h).
-Sprite g_sprites[SP_COUNT];
 Sprite g_bonusFrames[4];
 Sprite g_bonusE[4];
 Sprite g_bonusS[4];
 Sprite g_bonusTaken[6];
 SDL_Texture* g_multBorder[6] = {};
 SDL_Texture* g_multSymbol[6] = {};
-Sprite g_coinFrames[7];
 Sprite g_bombFrames[7];
-Sprite g_orbCycle[7][4];
+SDL_Texture* g_ballPen[8] = {};
 Sprite g_explFrames[3];
 Sprite g_pickCoinFrames[4];
 Sprite g_startBg[2];
@@ -38,18 +37,18 @@ Sprite g_luckyFrame[LUCKY_PHASES];
 Sprite g_nameFrame;
 
 SDL_Texture* g_jackTex[JF_COUNT]      = {};
-SDL_Texture* g_jackPhase[JF_COUNT][4] = {};
+SDL_Texture* g_jackPen[JF_COUNT][8] = {};
 JackVarFrame g_jackDance[3] = {};
 JackVarFrame g_jackPlf[4]   = {};
 JackVarFrame g_jackDead[4]  = {};
 JackVarFrame g_jackWin[4]   = {};
 SDL_Texture* g_gameOverTex  = nullptr;
 
-SDL_Texture* g_birdTex[BF_COUNT] = {};
-SDL_Texture* g_birdEye[BF_COUNT] = {};
+SDL_Texture* g_enemyTex[256] = {};
+SDL_Texture* g_enemyEye[256] = {};
+Sprite       g_frozen;
+SDL_Texture* g_frozenGlint[2] = {};
 
-SDL_Texture* g_mummyTex[MF_COUNT] = {};
-SDL_Texture* g_mummyEye[MF_COUNT] = {};
 
 SDL_Texture* g_initEnemyTex[4] = {};
 
@@ -79,6 +78,24 @@ static SDL_Texture* makeEyeMask(SDL_Renderer* ren, SDL_Surface* s) {
     return t;
 }
 
+// White mask of the pixels drawn with ROM pen `pen` in a pen map (rom_pens.h),
+// or nullptr if the pen is unused.
+static SDL_Texture* makePenMask(SDL_Renderer* ren, const char* pens, int w, int h, int pen) {
+    SDL_Surface* m = SDL_CreateSurface(w, h, SDL_PIXELFORMAT_RGBA32);
+    bool any = false;
+    for (int y = 0; y < h; ++y)
+        for (int x = 0; x < w; ++x) {
+            const bool on = pens[y * w + x] - '0' == pen;
+            Uint8* mp = (Uint8*)m->pixels + y * m->pitch + x * 4;
+            mp[0] = mp[1] = mp[2] = 255;
+            mp[3] = on ? 255 : 0;
+            any |= on;
+        }
+    SDL_Texture* t = any ? texFromSurface(ren, m) : nullptr;
+    SDL_DestroySurface(m);
+    return t;
+}
+
 unsigned char* loadAtlas(int* w, int* h) {
     int c = 0;
     return stbi_load_from_memory(sprites_full_png, (int)sprites_full_png_len, w, h, &c, 4);
@@ -100,35 +117,15 @@ void buildSprites(SDL_Renderer* ren) {
     };
 
     // Jack living frames (JF_COUNT frames at 16x15). See atlas::JACK.
-    auto lum = [](const Uint8* p) { return 0.30f*p[0] + 0.59f*p[1] + 0.11f*p[2]; };
     for (int i = 0; i < JF_COUNT; ++i) {
         SDL_Surface* f = SDL_CreateSurface(SIZE_16PX, JACK_FH, SDL_PIXELFORMAT_RGBA32);
         SDL_Rect src{atlas::JACK[i].x, atlas::JACK[i].y, SIZE_16PX, JACK_FH};
         SDL_BlitSurface(atlas, &src, f, nullptr);
         g_jackTex[i] = texFromSurface(ren, f);
-        // Build 4 white luminance-banded frames for the freeze colour cycle.
-        float lo = 1e9f, hi = -1e9f;
-        for (int y = 0; y < JACK_FH; ++y)
-            for (int x = 0; x < SIZE_16PX; ++x) {
-                const Uint8* sp = (const Uint8*)f->pixels + y * f->pitch + x * 4;
-                if (sp[3] > 0) { float L = lum(sp); lo = std::min(lo, L); hi = std::max(hi, L); }
-            }
-        float span = std::max(1.0f, hi - lo);
-        const float bf[4] = {0.45f, 0.65f, 0.83f, 1.0f};
-        for (int ph = 0; ph < 4; ++ph) {
-            SDL_Surface* sv = SDL_CreateSurface(SIZE_16PX, JACK_FH, SDL_PIXELFORMAT_RGBA32);
-            for (int y = 0; y < JACK_FH; ++y)
-                for (int x = 0; x < SIZE_16PX; ++x) {
-                    const Uint8* sp = (const Uint8*)f->pixels + y * f->pitch + x * 4;
-                    Uint8* dp = (Uint8*)sv->pixels + y * sv->pitch + x * 4;
-                    if (sp[3] == 0) { dp[0]=dp[1]=dp[2]=dp[3]=0; continue; }
-                    int band = std::min(3, (int)((lum(sp) - lo) / span * 4.0f));
-                    Uint8 v = (Uint8)(bf[(band + ph) & 3] * 255.0f);
-                    dp[0] = dp[1] = dp[2] = v; dp[3] = 255;
-                }
-            g_jackPhase[i][ph] = texFromSurface(ren, sv);
-            SDL_DestroySurface(sv);
-        }
+        // White mask per ROM pen, recoloured with palette 14 while Jack holds
+        // the Power ball (see drawPlayer).
+        for (int k = 1; k < 8; ++k)
+            g_jackPen[i][k] = makePenMask(ren, rompens::kJack[i], SIZE_16PX, JACK_FH, k);
         SDL_DestroySurface(f);
     }
 
@@ -192,13 +189,35 @@ void buildSprites(SDL_Renderer* ren) {
         SDL_DestroySurface(f);
     }
 
-    // Frozen-enemy coin spin (7 frames 14x14).
-    for (int i = 0; i < 7; ++i) {
-        SDL_Surface* f = SDL_CreateSurface(atlas::COIN.w, atlas::COIN.h, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{atlas::COIN.x0 + i * atlas::COIN.dx, atlas::COIN.y,
-                     atlas::COIN.w, atlas::COIN.h};
+    // Frozen enemy coin: pen 5 put back to its resting colour, plus white
+    // masks of pens 5 and 6 for the glint.
+    {
+        const AtlasRect& a = atlas::FROZEN;
+        SDL_Surface* f = SDL_CreateSurface(a.w, a.h, SDL_PIXELFORMAT_RGBA32);
+        SDL_Surface* m[2];
+        SDL_Rect src{a.x, a.y, a.w, a.h};
         SDL_BlitSurface(atlas, &src, f, nullptr);
-        g_coinFrames[i] = {atlas::COIN.w, atlas::COIN.h, texFromSurface(ren, f)};
+        for (int k = 0; k < 2; ++k) m[k] = SDL_CreateSurface(a.w, a.h, SDL_PIXELFORMAT_RGBA32);
+        for (int y = 0; y < a.h; ++y)
+            for (int x = 0; x < a.w; ++x) {
+                Uint8* p = (Uint8*)f->pixels + y * f->pitch + x * 4;
+                const unsigned rgb = p[3] ? (unsigned)p[0] << 16 | p[1] << 8 | p[2] : ~0u;
+                for (int k = 0; k < 2; ++k) {
+                    Uint8* q = (Uint8*)m[k]->pixels + y * m[k]->pitch + x * 4;
+                    q[0] = q[1] = q[2] = 255;
+                    q[3] = rgb == (k ? atlas::FROZEN_PEN6 : atlas::FROZEN_PEN5) ? 255 : 0;
+                }
+                if (rgb == atlas::FROZEN_PEN5) {
+                    p[0] = atlas::FROZEN_PEN5_REST >> 16;
+                    p[1] = atlas::FROZEN_PEN5_REST >> 8 & 0xFF;
+                    p[2] = atlas::FROZEN_PEN5_REST & 0xFF;
+                }
+            }
+        g_frozen = {a.w, a.h, texFromSurface(ren, f)};
+        for (int k = 0; k < 2; ++k) {
+            g_frozenGlint[k] = texFromSurface(ren, m[k]);
+            SDL_DestroySurface(m[k]);
+        }
         SDL_DestroySurface(f);
     }
 
@@ -264,29 +283,6 @@ void buildSprites(SDL_Renderer* ren) {
         SDL_DestroySurface(f);
     }
 
-    // Transformed chasers (2 animation frames each).
-    g_sprites[SP_SPHERE1] = cropR(atlas::SPHERE1);
-    g_sprites[SP_SPHERE2] = cropR(atlas::SPHERE2);
-    g_sprites[SP_ORB1]    = cropR(atlas::ORB1);
-    g_sprites[SP_ORB2]    = cropR(atlas::ORB2);
-    g_sprites[SP_CLUB1]   = cropR(atlas::CLUB1);
-    g_sprites[SP_CLUB2]   = cropR(atlas::CLUB2);
-    g_sprites[SP_UFO1]    = cropR(atlas::UFO1);
-    g_sprites[SP_UFO2]    = cropR(atlas::UFO2);
-
-    // Horn frames centred into a 16x16 cell.
-    auto cropCentered = [&](const AtlasRect& a) -> Sprite {
-        SDL_Surface* f = SDL_CreateSurface(16, 16, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{a.x, a.y, a.w, a.h};
-        SDL_Rect dst{(16 - a.w) / 2, (16 - a.h) / 2, a.w, a.h};
-        SDL_BlitSurface(atlas, &src, f, &dst);
-        Sprite sp{16, 16, texFromSurface(ren, f)};
-        SDL_DestroySurface(f);
-        return sp;
-    };
-    g_sprites[SP_HORN1] = cropCentered(atlas::HORN1);
-    g_sprites[SP_HORN2] = cropCentered(atlas::HORN2);
-
     // Bonus collect flash (6 frames 32x32).
     for (int i = 0; i < 6; ++i) g_bonusTaken[i] = cropStrip(atlas::BONUS_TAKEN, i);
 
@@ -296,52 +292,19 @@ void buildSprites(SDL_Renderer* ren) {
     // Bomb-clear explosion (3 growing frames).
     for (int i = 0; i < 3; ++i) g_explFrames[i] = cropR(atlas::EXPL[i]);
 
-    // Bird (BF_COUNT) and mummy (MF_COUNT) frames, centred into 16x16 cells and
-    // given a red-eye overlay mask. Same processing, different atlas tables.
-    auto buildEyed = [&](const AtlasRect& a, SDL_Texture*& body, SDL_Texture*& eye) {
+    // Enemy frames by arcade sprite code, each with its pen 1 (red) mask.
+    for (const atlas::CodeCell& c : atlas::ENEMY_CELLS) {
         SDL_Surface* f = SDL_CreateSurface(SIZE_16PX, SIZE_16PX, SDL_PIXELFORMAT_RGBA32);
-        SDL_Rect src{a.x, a.y, a.w, a.h};
-        SDL_Rect dst{(SIZE_16PX - a.w) / 2, (SIZE_16PX - a.h) / 2, a.w, a.h};
-        SDL_BlitSurface(atlas, &src, f, &dst);
-        body = texFromSurface(ren, f);
-        eye  = makeEyeMask(ren, f);
+        SDL_Rect src{c.x, c.y, SIZE_16PX, SIZE_16PX};
+        SDL_BlitSurface(atlas, &src, f, nullptr);
+        g_enemyTex[c.code] = texFromSurface(ren, f);
+        g_enemyEye[c.code] = makeEyeMask(ren, f);
         SDL_DestroySurface(f);
-    };
-    for (int i = 0; i < BF_COUNT; ++i) buildEyed(atlas::BIRD[i],  g_birdTex[i],  g_birdEye[i]);
-    for (int i = 0; i < MF_COUNT; ++i) buildEyed(atlas::MUMMY[i], g_mummyTex[i], g_mummyEye[i]);
-
-    // Power orb: prebake per colour family × 4 cycle phases.
-    {
-        const int PX = atlas::ORB.x, PY = atlas::ORB.y, ow = atlas::ORB.w, oh = atlas::ORB.h;
-        std::vector<Uint8> opx((size_t)ow * oh * 4);
-        for (int y = 0; y < oh; ++y)
-            std::memcpy(&opx[(size_t)y * ow * 4],
-                        (Uint8*)atlas->pixels + (PY + y) * atlas->pitch + PX * 4,
-                        (size_t)ow * 4);
-        float lo = 1e9f, hi = -1e9f;
-        for (int i = 0; i < ow * oh; ++i)
-            if (opx[i*4+3] > 0) { float L = lum(&opx[i*4]); lo = std::min(lo, L); hi = std::max(hi, L); }
-        float span = std::max(1.0f, hi - lo);
-        std::vector<int> band((size_t)ow * oh, -1);
-        for (int i = 0; i < ow * oh; ++i)
-            if (opx[i*4+3] > 0) band[i] = std::min(3, (int)((lum(&opx[i*4]) - lo) / span * 4.0f));
-        const float bf[4] = {0.50f, 0.68f, 0.84f, 1.0f};
-        for (int fam = 0; fam < 7; ++fam) {
-            Color bc = POWER_COLORS[fam];
-            for (int ph = 0; ph < 4; ++ph) {
-                SDL_Surface* s = SDL_CreateSurface(ow, oh, SDL_PIXELFORMAT_RGBA32);
-                for (int i = 0; i < ow * oh; ++i) {
-                    Uint8* dp = (Uint8*)s->pixels + i * 4;
-                    if (band[i] < 0) { dp[0]=dp[1]=dp[2]=dp[3]=0; continue; }
-                    float f = bf[(band[i] + ph) & 3];
-                    dp[0]=(Uint8)(bc.r*f); dp[1]=(Uint8)(bc.g*f);
-                    dp[2]=(Uint8)(bc.b*f); dp[3]=255;
-                }
-                g_orbCycle[fam][ph] = {ow, oh, texFromSurface(ren, s)};
-                SDL_DestroySurface(s);
-            }
-        }
     }
+
+    // Power ball: one white mask per ROM pen, recoloured with palette 14.
+    for (int k = 1; k < 8; ++k)
+        g_ballPen[k] = makePenMask(ren, rompens::kPowerBall, SIZE_16PX, SIZE_16PX, k);
 
     // Spawn flash (4 frames, white masks).
     for (int i = 0; i < 4; ++i) {
@@ -404,13 +367,6 @@ void buildSprites(SDL_Renderer* ren) {
     stbi_image_free(spx);
 }
 
-void drawSprite(SDL_Renderer* r, SpriteId id, float x, float y,
-                float w, float h, bool flip) {
-    SDL_FRect dst{x, y, w, h};
-    SDL_RenderTextureRotated(r, g_sprites[id].tex, nullptr, &dst, 0.0, nullptr,
-                             flip ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE);
-}
-
 void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
                    bool flip, Uint8 cr, Uint8 cg, Uint8 cb) {
     SDL_SetTextureColorMod(tex, cr, cg, cb);
@@ -424,16 +380,14 @@ void destroySprites() {
     auto ds = [&](Sprite& s)      { dt(s.tex); };
     auto dv = [&](JackVarFrame& f){ dt(f.tex); };
 
-    for (Sprite& s : g_sprites)      ds(s);
     for (Sprite& s : g_bonusFrames)  ds(s);
     for (Sprite& s : g_bonusE)       ds(s);
     for (Sprite& s : g_bonusS)       ds(s);
     for (Sprite& s : g_bonusTaken)   ds(s);
     for (SDL_Texture*& t : g_multBorder) dt(t);
     for (SDL_Texture*& t : g_multSymbol) dt(t);
-    for (Sprite& s : g_coinFrames)   ds(s);
     for (Sprite& s : g_bombFrames)   ds(s);
-    for (auto& row : g_orbCycle) for (Sprite& s : row) ds(s);
+    for (SDL_Texture*& t : g_ballPen) dt(t);
     for (Sprite& s : g_explFrames)      ds(s);
     for (Sprite& s : g_pickCoinFrames)  ds(s);
     for (Sprite& s : g_startBg)         ds(s);
@@ -441,15 +395,15 @@ void destroySprites() {
     for (Sprite& s : g_luckyFrame)      ds(s);
     ds(g_nameFrame);
     for (SDL_Texture*& t : g_jackTex)   dt(t);
-    for (auto& row : g_jackPhase) for (SDL_Texture*& t : row) dt(t);
+    for (auto& row : g_jackPen) for (SDL_Texture*& t : row) dt(t);
     for (JackVarFrame& f : g_jackDance) dv(f);
     for (JackVarFrame& f : g_jackPlf)   dv(f);
     for (JackVarFrame& f : g_jackDead)  dv(f);
     for (JackVarFrame& f : g_jackWin)   dv(f);
     dt(g_gameOverTex);
-    for (SDL_Texture*& t : g_birdTex)      dt(t);
-    for (SDL_Texture*& t : g_birdEye)      dt(t);
-    for (SDL_Texture*& t : g_mummyTex)     dt(t);
-    for (SDL_Texture*& t : g_mummyEye)     dt(t);
+    for (SDL_Texture*& t : g_enemyTex)     dt(t);
+    for (SDL_Texture*& t : g_enemyEye)     dt(t);
+    ds(g_frozen);
+    for (SDL_Texture*& t : g_frozenGlint)  dt(t);
     for (SDL_Texture*& t : g_initEnemyTex) dt(t);
 }

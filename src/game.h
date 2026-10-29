@@ -62,3 +62,9 @@ void insertHiScore(Game& g, const char* name);
 
 // Confirm the typed name on the NAMEENTRY screen: insert, save, return to TITLE.
 void confirmNameEntry(Game& g);
+
+// Attract mode: go to the TITLE state at the given attract step (0 = table,
+// 2 = banner), start a demo of round 1 or 2, or abandon a running demo.
+void enterAttract(Game& g, int step);
+void startDemo(Game& g, int round);
+void stopDemo(Game& g);

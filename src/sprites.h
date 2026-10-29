@@ -3,35 +3,23 @@
 #include "types.h"
 #include "renderer.h"
 
-// Pulsing eye overlay intensity (bird/mummy): bright → black → bright.
-constexpr Uint8 EYE_PULSE[] = {255, 222, 189, 156, 115, 82, 49, 0,
-                               49,  82, 115, 156, 189, 222};
+// Red level of the enemies' pen 1 (palette 4): the arcade steps it through
+// this table, one entry every EYE_PULSE_FRAMES (main ROM 0x0705).
+constexpr Uint8 EYE_PULSE[] = {68, 136, 204, 255, 204, 136, 68, 0};
 inline Uint8 eyePulse(float t) {
-    return EYE_PULSE[(int)(t / BIRD_PULSE_STEP) % (int)(sizeof(EYE_PULSE))];
+    return EYE_PULSE[(int)(t * ARCADE_HZ / EYE_PULSE_FRAMES) % (int)(sizeof(EYE_PULSE))];
 }
-
-// Sprite IDs for the transformed chasers and legacy entries (bird/mummy use
-// dedicated per-frame texture arrays below).
-enum SpriteId {
-    SP_BOMB, SP_ENEMY1, SP_ENEMY2,
-    SP_MUMMY, SP_MUMMY_WALK, SP_MUMMY_FALL,
-    SP_SPHERE1, SP_SPHERE2, SP_ORB1, SP_ORB2, SP_HORN1, SP_HORN2,
-    SP_CLUB1, SP_CLUB2, SP_UFO1, SP_UFO2,
-    SP_COUNT
-};
 
 struct Sprite { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 
-extern Sprite g_sprites[SP_COUNT];
 extern Sprite g_bonusFrames[4];
 extern Sprite g_bonusE[4];
 extern Sprite g_bonusS[4];
 extern Sprite g_bonusTaken[6];
 extern SDL_Texture* g_multBorder[6];
 extern SDL_Texture* g_multSymbol[6];
-extern Sprite g_coinFrames[7];
 extern Sprite g_bombFrames[7];
-extern Sprite g_orbCycle[7][4];
+extern SDL_Texture* g_ballPen[8];   // Power ball, per ROM pen 1-7 (white masks)
 extern Sprite g_explFrames[3];
 extern Sprite g_pickCoinFrames[4];
 extern Sprite g_startBg[2];
@@ -55,33 +43,21 @@ struct JackVarFrame { int w = 0, h = 0; SDL_Texture* tex = nullptr; };
 enum JackWinPose { JW_NORMAL, JW_LEFT, JW_RIGHT, JW_UP };
 
 extern SDL_Texture*  g_jackTex[JF_COUNT];
-extern SDL_Texture*  g_jackPhase[JF_COUNT][4];
+extern SDL_Texture*  g_jackPen[JF_COUNT][8];   // per ROM pen 1-7 (white masks)
 extern JackVarFrame  g_jackDance[3];
 extern JackVarFrame  g_jackPlf[4];
 extern JackVarFrame  g_jackDead[4];
 extern JackVarFrame  g_jackWin[4];
 extern SDL_Texture*  g_gameOverTex;
 
-// Bird wing-flap frames (left / right / vertical, 3 each).
-enum BirdFrame {
-    BF_LEFT0, BF_LEFT1, BF_LEFT2,
-    BF_RIGHT0, BF_RIGHT1, BF_RIGHT2,
-    BF_VERT0, BF_VERT1, BF_VERT2,
-    BF_COUNT
-};
-extern SDL_Texture* g_birdTex[BF_COUNT];
-extern SDL_Texture* g_birdEye[BF_COUNT];
+// Enemy frames indexed by arcade sprite code (atlas::ENEMY_CELLS), each with
+// its pen 1 mask (the red the arcade pulses, see eyePulse).
+extern SDL_Texture* g_enemyTex[256];
+extern SDL_Texture* g_enemyEye[256];
 
-// Mummy walk/idle/fall frames.
-enum MummyFrame {
-    MF_IDLE,
-    MF_WALK_R0, MF_WALK_R1, MF_WALK_R2,
-    MF_WALK_L0, MF_WALK_L1, MF_WALK_L2,
-    MF_FALL,
-    MF_COUNT
-};
-extern SDL_Texture* g_mummyTex[MF_COUNT];
-extern SDL_Texture* g_mummyEye[MF_COUNT];
+// Frozen enemy coin (pen 5 at rest) and its pen 5 / pen 6 glint masks.
+extern Sprite       g_frozen;
+extern SDL_Texture* g_frozenGlint[2];
 
 // Spawn-flash frames (baked as white masks, tinted at draw time).
 extern SDL_Texture* g_initEnemyTex[4];
@@ -95,8 +71,6 @@ void buildSprites(SDL_Renderer* ren);
 // Free all sprite textures (call before SDL_DestroyRenderer).
 void destroySprites();
 
-void drawSprite(SDL_Renderer* r, SpriteId id, float x, float y,
-                float w, float h, bool flip);
 void drawTexTinted(SDL_Renderer* r, SDL_Texture* tex, const SDL_FRect& dst,
                    bool flip, Uint8 cr, Uint8 cg, Uint8 cb);
 

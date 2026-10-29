@@ -1,5 +1,7 @@
 #include "game.h"
 #include "audio.h"
+#include "demo_data.h"
+#include "demo_runs.h"
 #include "enemy.h"
 #include <algorithm>
 #include <cmath>
@@ -17,9 +19,9 @@ static void bounceSound(float gain) {
     audio::play(audio::SND_BONUS, "coin_bounce", false, nullptr, gain);
 }
 
-// In-game BGM comes from the round table's music index (0..2). Index→track
-// follows the Godot reference (rounds 1, 2, 3 → BGM 1, BGM 3, BGM 2); the
-// mapping to the arcade's own tunes has not been verified by ear.
+// In-game BGM comes from the round table's music index (0..2): rounds 1, 2, 3
+// → BGM 1, BGM 3, BGM 2, i.e. arcade sound commands 0x23, 0x24, 0x22 (checked
+// against the commands the arcade sends at the start of rounds 1-4 in MAME).
 static audio::Sid musicForLevel(int level) {
     switch (leveldata::rounds[leveldata::roundIndex(level)].music) {
         case 0:  return audio::SND_MUSIC;
@@ -78,6 +80,7 @@ static Enemy makeBird(Game& g, float ang) {
     e.y    = BIRD_SPAWN_T + (BIRD_SPAWN_B - BIRD_SPAWN_T) * (0.5f + 0.5f * std::sin(ang));
     e.vx   = std::cos(ang) * speed + jitter(g.rng) * 10.0f;
     e.vy   = std::sin(ang) * speed + jitter(g.rng) * 10.0f;
+    startEnemyAnim(e);
     return e;
 }
 
@@ -88,12 +91,20 @@ void spawnEnemies(Game& g) {
         g.enemies.push_back(makeBird(g, (i + 0.5f) / birds * 6.2831853f));
 }
 
+// Load a table into palette 14 (0 rainbow, 1-7 a Power ball colour family);
+// its rotation restarts from the table's first entry (ROM 0x24A9).
+static void loadPal14(Game& g, int table) {
+    g.pal14     = table;
+    g.pal14Time = g.time;
+}
+
 void restartEnemies(Game& g) {
     spawnEnemies(g);
     g.mummyTimer     = 0.0f;
     g.mummiesSpawned = 0;
     g.transformIdx   = 0;
     g.freezeTimer    = 0.0f;
+    if (!g.orb.active) loadPal14(g, 0);
     g.killCount      = 0;
     g.orb.active     = false;
 }
@@ -104,6 +115,7 @@ void resetPlayer(Game& g, bool invuln) {
     g.p.vx       = g.p.vy = 0.0f;
     g.p.onGround = false;
     g.p.crouch   = 0.0f;
+    g.p.landing  = 0.0f;
     g.p.invuln   = invuln ? INVULN_TIME : 0.0f;
 }
 
@@ -136,6 +148,7 @@ void startRound(Game& g) {
     resetPlayer(g, true);
     g.orb.active     = false;
     g.freezeTimer    = 0.0f;
+    loadPal14(g, 0);
     g.killCount      = 0;
     g.death          = {};
     g.mummyTimer     = 0.0f;
@@ -163,6 +176,7 @@ void optionAdjust(Game& g, int d) {
 }
 
 void startGame(Game& g) {
+    stopDemo(g);
     audio::stopTag("title");   // leave the title-screen music behind
     g.score     = g.start100k ? 100000 : 0;
     g.lives     = g.startLives;
@@ -246,9 +260,306 @@ void confirmNameEntry(Game& g) {
     insertHiScore(g, g.hs.entry);
     saveHiScores(g);
     audio::stopTag("nameentry");
-    g.hs.showTable  = true;   // Godot putScore: show the fresh table first
-    g.hs.flashTimer = 0.0f;
-    g.state = TITLE;
+    enterAttract(g, 0);   // show the fresh table first
+}
+
+// ---------------------------------------------------------------------------
+// Attract mode and demo play
+// ---------------------------------------------------------------------------
+static void hitJack(Game& g);
+
+static_assert(demoruns::SLOT_COUNT == sizeof(DemoState::slotCode),
+              "DemoState slot arrays must match demoruns::kSlots");
+
+// Arcade sprite position (Jack's coordinates, see snapToTrack) → world centre.
+static float demoWorldX(int x) { return LOGW / 2.0f + (x - 120.0f) * PX_TO_WU_X; }
+static float demoWorldY(int y) { return LOGH / 2.0f + (y - 121.0f) * PX_TO_WU_Y; }
+
+void enterAttract(Game& g, int step) {
+    g.state         = TITLE;
+    g.attract.step  = step;
+    g.attract.timer = 0.0f;
+    g.hs.showTable  = step == 0;
+}
+
+void startDemo(Game& g, int round) {
+    DemoState& d = g.demo;
+    d = {};
+    d.active     = true;
+    d.round      = round;
+    d.stream     = g.attract.cycle & 1;
+    d.savedScore = g.score;
+    d.savedLives = g.lives;
+    d.savedLevel = g.level;
+    d.savedPower = g.powerMeter;
+
+    // Pick one of the arcade's runs for this recording, as often as it came up.
+    const demoruns::RunSet& set = demoruns::kRunSets[round - 1][d.stream];
+    int total = 0;
+    for (int i = 0; i < set.count; ++i) total += set.runs[i].weight;
+    int pick = (int)(g.rng() % (unsigned)total);
+    while (pick >= set.runs[d.run].weight) pick -= set.runs[d.run++].weight;
+
+    g.attract.step = round == 1 ? 1 : 3;
+    g.score      = 0;
+    g.lives      = 3;
+    g.level      = round;
+    g.powerMeter = 0.0f;
+    const bool alwaysS = g.alwaysS;   // the OPTIONS S coin is for real games only
+    g.alwaysS = false;
+    startRound(g);
+    g.alwaysS = alwaysS;
+    // No "START!" intro: Jack stands still for the run's lead (30 frames in
+    // round 1), then the joystick replay begins. No blinking either.
+    g.startAnim = set.runs[d.run].lead / ARCADE_HZ;
+    g.p.invuln  = 0.0f;
+    g.state     = PLAYING;
+    audio::setMuted(true);
+}
+
+void stopDemo(Game& g) {
+    DemoState& d = g.demo;
+    if (!d.active) return;
+    d.active     = false;
+    g.score      = d.savedScore;
+    g.lives      = d.savedLives;
+    g.level      = d.savedLevel;
+    g.powerMeter = d.savedPower;
+    audio::setMuted(false);
+}
+
+// Advance the replay by one arcade frame (ROM 0x4759): the current bits stay
+// for `hold` more frames, then the next step is loaded; at the end of the
+// recording the arcade starts it again. The bits then go through the arcade's
+// input filter (ROM 0x03A2): a bit counts once it has been on for three
+// frames in a row, and drops at once, so every press acts two frames late.
+static void demoFrame(DemoState& d) {
+    const demodata::Stream& s = demodata::kStreams[d.round - 1][d.stream];
+    const bool wasJump = d.held & 0x10;
+    if (d.hold > 0) {
+        d.hold--;
+    } else if (d.step >= s.count) {
+        d.bits = 0;
+        d.hold = 1;
+        d.step = 0;
+    } else {
+        d.hold = s.steps[d.step].hold;
+        d.bits = s.steps[d.step].bits;
+        d.step++;
+    }
+    d.held    = d.bits & d.hist[0] & d.hist[1];
+    d.hist[1] = d.hist[0];
+    d.hist[0] = d.bits;
+    d.pressed = (d.held & 0x10) && !wasJump;
+    d.frame++;
+
+    // Follow the arcade's recorded path for this frame.
+    const demodata::Track& t = demodata::kTracks[d.round - 1][d.stream];
+    if (d.frame == 1) {
+        d.trackX  = t.x0;
+        d.trackY  = t.y0;
+        d.onTrack = true;
+    } else if (d.frame - 1 < t.frames) {
+        d.trackX += t.d[2 * (d.frame - 2)];
+        d.trackY += t.d[2 * (d.frame - 2) + 1];
+    } else {
+        d.onTrack = false;
+    }
+}
+
+// Put Jack on the arcade's recorded path, between the last replayed frame and
+// the next one. The replayed inputs still drive his animation, jumps and
+// pickups; this only removes the clone's physics drift.
+static void snapToTrack(Game& g) {
+    const DemoState& d = g.demo;
+    if (!d.onTrack || g.death.active) return;
+    const demodata::Track& t = demodata::kTracks[d.round - 1][d.stream];
+    float dx = 0.0f, dy = 0.0f;
+    if (d.frame < t.frames) {
+        dx = t.d[2 * (d.frame - 1)];
+        dy = t.d[2 * (d.frame - 1) + 1];
+    }
+    const float ax = (d.trackX + dx * d.frameAcc) / 16.0f;
+    const float ay = (d.trackY + dy * d.frameAcc) / 16.0f;
+    // Jack's start (120, 120) is the clone's centre; the arcade's Y sits one
+    // pixel lower for the same height (standing on the floor is 217 vs 216).
+    g.p.x  = LOGW / 2.0f - PW / 2.0f + (ax - 120.0f) * PX_TO_WU_X;
+    g.p.y  = LOGH / 2.0f - PH / 2.0f + (ay - 121.0f) * PX_TO_WU_Y;
+    g.p.vy = dy / 16.0f * PX_TO_WU_Y * ARCADE_HZ;
+}
+
+// Decode the arcade run up to frame `target` (demo_runs.h). A frozen enemy
+// that Jack collects turns into the arcade's sparkle (0xA0): show the clone's
+// pickup effect there.
+static void decodeRun(Game& g, int target) {
+    DemoState& d = g.demo;
+    const demoruns::Run& run = demoruns::kRunSets[d.round - 1][d.stream].runs[d.run];
+    while (d.runFrame < target && d.runFrame + 1 < run.frames) {
+        d.runFrame++;
+        for (int k = 0; k < demoruns::SLOT_COUNT; ++k) {
+            d.prevX[k] = d.slotX[k];
+            d.prevY[k] = d.slotY[k];
+        }
+        const uint8_t* p = run.data + d.runPos;
+        const int mask = p[0] | p[1] << 8;
+        p += 2;
+        for (int k = 0; k < demoruns::SLOT_COUNT; ++k) {
+            if (!(mask & 1 << k)) continue;
+            const uint8_t b = *p++;
+            if (b == 0x00) {
+                d.slotCode[k] = 0;
+            } else if (b & 0x80) {
+                d.slotX[k] += ((b >> 3) & 7) - 3;
+                d.slotY[k] += (b & 7) - 3;
+            } else {
+                if (d.slotCode[k] == 0) {   // new sprite: no motion to report
+                    d.prevX[k] = p[1];
+                    d.prevY[k] = p[2];
+                }
+                if (p[0] == 0xA0 && d.slotCode[k] == 0x3F)
+                    g.coinPickups.push_back({demoWorldX(p[1]), demoWorldY(p[2]), 0.0f});
+                d.slotCode[k] = p[0];
+                d.slotX[k]    = p[1];
+                d.slotY[k]    = p[2];
+                p += 3;
+            }
+        }
+        d.runPos = p - run.data;
+    }
+}
+
+// Show the decoded arcade sprites as the clone's enemies, Power orb and bonus
+// coin. Enemies show the recorded ROM sprite code itself (see
+// atlas::ENEMY_CELLS); the runs keep no attributes, so the flip the arcade
+// gives right-moving birds, clubs and horns comes from the slot's motion.
+// Other codes: 0xBC-0xBF flash in, 0x3F frozen enemy (coin), 0x3D Power ball,
+// 0x0C-0x17 B/E/S coin. Score numbers, sparkles and the like are left out
+// (the clone draws its own).
+static void applyRun(Game& g) {
+    DemoState& d = g.demo;
+
+    const bool orbWas = g.orb.active;
+    g.enemies.clear();
+    g.orb.active   = false;
+    g.bonus.active = false;
+    bool frozen = false;
+    for (int k = 0; k < demoruns::SLOT_COUNT; ++k) {
+        const int c = d.slotCode[k];
+        if (c == 0) continue;
+        const float x = demoWorldX(d.slotX[k]), y = demoWorldY(d.slotY[k]);
+        const int dx = (int)d.slotX[k] - d.prevX[k], dy = (int)d.slotY[k] - d.prevY[k];
+        if (dx) d.slotDir[k] = dx > 0 ? 1 : -1;
+        const float vx = dx * PX_TO_WU_X * ARCADE_HZ, vy = dy * PX_TO_WU_Y * ARCADE_HZ;
+
+        if (c == 0x3D) {
+            if (!orbWas) {
+                g.orb.family = 1;
+                loadPal14(g, 1);
+            }
+            g.orb.active = true;
+            g.orb.x = x;
+            g.orb.y = y;
+            continue;
+        }
+        if (c >= 0x0C && c <= 0x17) {
+            g.bonus.active = true;
+            g.bonus.kind   = (c - 0x0C) / 4 == 0 ? BK_B : (c - 0x0C) / 4 == 1 ? BK_E : BK_S;
+            g.bonus.x      = x;
+            g.bonus.y      = y;
+            continue;
+        }
+
+        Enemy e;
+        e.x = x;
+        e.y = y;
+        e.r = 10.0f;
+        e.phase = EP_FLY;
+        e.vx = vx;
+        e.vy = vy;
+        e.code = c;
+        e.flip = d.slotDir[k] > 0 &&
+                 ((c >= 0x29 && c <= 0x2B) || (c >= 0x38 && c <= 0x3B) || (c >= 0x50 && c <= 0x53));
+        if (c >= 0x04 && c <= 0x0B) {
+            e.kind  = EK_MUMMY;
+            e.phase = c == 0x05 ? EP_FALL : EP_WALK;
+        } else if (c >= 0x29 && c <= 0x30) {
+            e.kind = EK_BIRD;
+        } else if (c >= 0x38 && c <= 0x3B) {
+            e.kind = EK_CLUB;
+        } else if (c >= 0x50 && c <= 0x53) {
+            e.kind = EK_HORN;
+        } else if (c >= 0x54 && c <= 0x5A) {
+            e.kind = EK_ORB;
+        } else if (c >= 0x60 && c <= 0x65) {
+            e.kind = EK_UFO;
+        } else if (c == 0x34 || (c >= 0x67 && c <= 0x6B)) {
+            e.kind = EK_SPHERE;
+        } else if (c >= 0xBC && c <= 0xBF) {
+            e.kind      = EK_MUMMY;
+            e.phase     = EP_INIT;
+            e.timer     = INIT_ENEMY_TIME * (1.0f - (c - 0xBC + 0.5f) / 4.0f);
+        } else if (c == 0x3F) {
+            e.kind = d.slotKind[k];
+            frozen = true;
+        } else {
+            continue;
+        }
+        d.slotKind[k] = e.kind;
+        g.enemies.push_back(e);
+    }
+    // Frozen enemies show as coins; keep the timer clear of the end-of-freeze
+    // blinking, which the arcade run already shows by itself.
+    if (!frozen && g.freezeTimer > 0.0f && !g.orb.active) loadPal14(g, 0);
+    g.freezeTimer = frozen ? FREEZE_TIME : 0.0f;
+}
+
+static void finishDemo(Game& g) {
+    const int round = g.demo.round;
+    stopDemo(g);
+    if (round == 2) g.attract.cycle++;
+    enterAttract(g, round == 1 ? 2 : 0);
+}
+
+static void updateDemo(Game& g, float dt) {
+    DemoState& d = g.demo;
+    Input in{};
+    if (g.startAnim <= 0.0f) {
+        d.frameAcc += dt * ARCADE_HZ;
+        while (d.frameAcc >= 1.0f) {
+            d.frameAcc -= 1.0f;
+            const bool pressed = d.pressed;
+            demoFrame(d);
+            d.pressed = d.pressed || pressed;   // keep an unconsumed press
+        }
+        in.right    = d.held & 0x01;
+        in.left     = d.held & 0x02;
+        in.up       = d.held & 0x04;
+        in.down     = d.held & 0x08;
+        in.jumpHeld = d.held & 0x10;
+        in.jumpPressed = d.pressed;
+        d.pressed = false;
+        snapToTrack(g);
+    }
+    updatePlaying(g, in, dt);
+    if (g.startAnim <= 0.0f && g.state == PLAYING) snapToTrack(g);
+    g.score = 0;   // the demo scores nothing on the arcade's HUD
+
+    // Replay the arcade run up to the current frame: its enemies, and whether
+    // they catch Jack. Frames count from the start of the run's lead.
+    const demoruns::Run& run = demoruns::kRunSets[d.round - 1][d.stream].runs[d.run];
+    const int frame = g.startAnim > 0.0f
+        ? (int)((run.lead / ARCADE_HZ - g.startAnim) * ARCADE_HZ)
+        : run.lead - 1 + d.frame;
+    decodeRun(g, frame);
+    applyRun(g);
+    g.bonus.anim += dt;
+    if (run.hit >= 0 && frame >= run.hit && !g.death.active) hitJack(g);
+
+    // The arcade ends the demo as soon as the round is cleared (no victory
+    // dance), or once Jack has been caught and the run is over. A clearing run
+    // gets a second of slack in case the last pickup lands a frame late.
+    const int end = run.hit >= 0 ? run.frames - 1 : run.frames + (int)ARCADE_HZ;
+    if (g.state != PLAYING || g.bombsLeft <= 0 || frame >= end) finishDemo(g);
 }
 
 int nextLitBomb(const Game& g, int orderMin) {
@@ -286,6 +597,23 @@ void finishLevel(Game& g) {
         g.state      = ROUNDCLEAR;
         g.clearTimer = CLEAR_TIME;
     }
+}
+
+// Jack touched an enemy: start the death sequence.
+static void hitJack(Game& g) {
+    g.death.active = true;
+    g.death.phase  = DP_DANCING;
+    g.death.frame  = 0;
+    g.death.loops  = 0;
+    g.death.anim   = 0.0f;
+    g.death.timer  = 0.0f;
+    audio::stopTag("music");
+    audio::stopTag("power");
+    audio::play(audio::SND_TOUCHED, "touched");
+    g.p.invuln   = 0.0f;
+    g.p.onGround = false;
+    g.p.vx       = 0.0f;
+    g.p.vy       = 0.0f;
 }
 
 // Drive the player's owned AnimSprite: pick the pose from his current state,
@@ -405,16 +733,16 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         audio::play(musicForLevel(g.level), "music", /*loop=*/true);
 
     const bool oldOnGround = p.onGround;
-    // Tracks actions that step the Power orb colour (jumps, wall bumps, landings).
-    bool orbStep = in.jumpPressed;
 
-    // Horizontal movement (frozen while crouching before take-off).
-    p.vx = p.crouch > 0.0f ? 0.0f : (in.right ? MOVE : 0.0f) - (in.left ? MOVE : 0.0f);
+    // Horizontal movement (frozen while crouching before take-off, and for a
+    // moment after landing, as on the arcade).
+    if (p.landing > 0.0f) p.landing -= dt;
+    p.vx = p.crouch > 0.0f || p.landing > 0.0f
+         ? 0.0f : (in.right ? MOVE : 0.0f) - (in.left ? MOVE : 0.0f);
     if (in.right && !in.left) p.face = 1;
     else if (in.left && !in.right) p.face = -1;
     p.x += p.vx * dt;
     float clampedX = std::clamp(p.x, BORDER_SOLID_X, LOGW - PW - BORDER_SOLID_X);
-    if (clampedX != p.x && p.vx != 0.0f) orbStep = true;
     p.x = clampedX;
 
     // Jump logic, as in the arcade: every jump is full height (holding the
@@ -468,27 +796,33 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         if (p.vy < 0 && oldTop >= pl.y + pl.h - 1.0f && p.y <= pl.y + pl.h) {
             p.y = pl.y + pl.h;
             p.vy = 0;
-            orbStep = true;
             break;
         }
     }
 
-    // Vertical girders act as walls: block horizontal movement through their
-    // sides. The eps keeps standing on top / passing just under from counting
-    // as a side hit. Horizontal platforms stay pass-through (Bomb Jack floors).
-    const float wallEps = 2.0f;
+    // Platform sides act as walls: block horizontal movement through them, for
+    // horizontal platforms as well as girders (measured on the arcade: Jack
+    // hangs at a platform end until he sinks below it). The eps keeps standing
+    // on top from counting as a side hit; Jack slips under a platform once his
+    // top is 3 px from its bottom.
+    const float wallEps = 2.0f, wallEpsUnder = 3.0f * PX_TO_WU_Y;
     for (const SDL_FRect& pl : g.platforms) {
-        if (pl.h <= pl.w) continue;                                   // girders only
-        if (p.y + PH <= pl.y + wallEps || p.y >= pl.y + pl.h - wallEps) continue;
+        if (pl.y >= FLOOR_TOP - 1.0f) continue;                       // not the floor
+        if (p.y + PH <= pl.y + wallEps || p.y >= pl.y + pl.h - wallEpsUnder) continue;
         if (p.x + PW <= pl.x || p.x >= pl.x + pl.w) continue;         // no overlap
-        if (p.vx > 0)      { p.x = pl.x - PW;     orbStep = true; }   // hit left face
-        else if (p.vx < 0) { p.x = pl.x + pl.w;   orbStep = true; }   // hit right face
+        if (p.vx > 0)      p.x = pl.x - PW;       // hit left face
+        else if (p.vx < 0) p.x = pl.x + pl.w;     // hit right face
     }
 
-    if (!oldOnGround && p.onGround) orbStep = true;
+    if (!oldOnGround && p.onGround) p.landing = LAND_HOLD;
     // Walking off a ledge sounds like a jump take-off on the arcade (command 0x11).
     if (oldOnGround && !p.onGround && p.vy >= 0.0f) audio::play(audio::SND_JUMP);
-    if (g.orb.active && orbStep) g.orb.family = (g.orb.family + 1) % 7;
+    // Every take-off (jump or walking off a ledge) steps the Power ball to its
+    // next colour family, 7 wrapping to 1, and reloads palette 14 (ROM 0x23DB).
+    if (g.orb.active && oldOnGround && !p.onGround) {
+        g.orb.family = g.orb.family % 7 + 1;
+        loadPal14(g, g.orb.family);
+    }
 
     // Footstep loop while walking on the ground (one at a time).
     if (p.onGround && (in.left || in.right) && audio::tagCount("walking") == 0)
@@ -523,14 +857,15 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             gain *= g.multiplier;
             g.score += gain;
             g.popups.push_back({b.x, b.y - 6, 0.0f, gain});
-            if (!g.orb.active && g.powerMeter >= POWER_NEEDED) {
+            if (!g.orb.active && g.powerMeter >= POWER_NEEDED && !g.demo.active) {
                 g.powerMeter   = 0.0f;   // arcade resets the counter when the ball appears
                 g.orb.active   = true;
                 g.orb.x        = LOGW / 2.0f;
                 g.orb.y        = LOGH / 2.0f - 16.0f;
                 g.orb.vx       = ORB_SPEED * 0.5f;
                 g.orb.vy       = ORB_SPEED * 0.8660254f;
-                g.orb.family   = 0;
+                g.orb.family   = 1;
+                loadPal14(g, 1);
                 // Orb on screen: duck the music and loop the "appearing" tone.
                 audio::pauseTag("music");
                 audio::play(audio::SND_POWER_APPEARING, "power", /*loop=*/true);
@@ -538,8 +873,12 @@ void updatePlaying(Game& g, const Input& in, float dt) {
         }
     }
 
+    // In the demo the enemies, the Power orb and the bonus coin are replayed from
+    // an arcade run (updateDemo) instead of simulated.
+    const bool replay = g.demo.active;
+
     // Power orb movement: bounces around the play area and off platforms.
-    if (g.orb.active) {
+    if (g.orb.active && !replay) {
         float oldOrbX = g.orb.x;
         float oldOrbY = g.orb.y;
         g.orb.x += g.orb.vx * dt;
@@ -593,7 +932,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     }
 
     // Power orb pickup: freeze all enemies and make them collectable.
-    if (g.orb.active) {
+    if (g.orb.active && !replay) {
         if (g.orb.x > p.x - ORB_R && g.orb.x < p.x + PW + ORB_R &&
             g.orb.y > p.y - ORB_R && g.orb.y < p.y + PH + ORB_R) {
             g.orb.active  = false;
@@ -603,10 +942,11 @@ void updatePlaying(Game& g, const Input& in, float dt) {
             // freeze ends (below), as on the arcade.
             audio::stopTag("power");
             audio::play(audio::SND_GOT_POWER, "power");
-            int idx = (g.orb.family % (int)std::size(POWER_POINTS) +
-                       (int)std::size(POWER_POINTS)) % (int)std::size(POWER_POINTS);
-            g.freezeColor = POWER_COLORS[idx];
+            // Points by colour family; palette 14 keeps that family's colours
+            // for the whole freeze.
+            int idx  = std::clamp(g.orb.family, 1, 7) - 1;
             int gain = POWER_POINTS[idx] * g.multiplier;
+            g.orb.family = 0;
             g.score += gain;
             g.popups.push_back({g.orb.x, g.orb.y, 0.0f, gain});
         }
@@ -625,7 +965,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     }
 
     // Bonus coin patrol and pickup.
-    if (g.bonus.active) {
+    if (g.bonus.active && !replay) {
         g.bonus.anim += dt;
         g.bonus.x    += g.bonus.vx * dt;
         const float lo = g.bonus.platX + BONUS_W * 0.5f;
@@ -694,16 +1034,17 @@ void updatePlaying(Game& g, const Input& in, float dt) {
     }
 
     const bool frozen = g.freezeTimer > 0.0f;
-    if (frozen) {
+    if (frozen && !replay) {
         g.freezeTimer -= dt;
         if (g.freezeTimer <= 0.0f && !g.orb.active) {
+            loadPal14(g, 0);
             audio::stopTag("power");
             resumeMusic();
         }
     }
 
     // Mummy drop-in schedule.
-    if (!frozen) {
+    if (!frozen && !replay) {
         const leveldata::EnemyDef& L = levelDef(g);
         g.mummyTimer += dt;
         if (g.mummyTimer >= MUMMY_SPAWN_DELAY && g.mummiesSpawned < L.nmummies) {
@@ -715,9 +1056,12 @@ void updatePlaying(Game& g, const Input& in, float dt) {
 
     // Enemy update and player-enemy collision.
     float pcx = p.x + PW / 2, pcy = p.y + PH / 2;
-    for (auto it = g.enemies.begin(); it != g.enemies.end();) {
+    for (auto it = g.enemies.begin(); it != g.enemies.end() && !replay;) {
         Enemy& e = *it;
         if (!frozen) {
+            // Animate first: an enemy that transforms in its update shows its
+            // first pose for a frame before stepping, as on the arcade.
+            animateEnemy(e, dt);
             if (e.kind == EK_MUMMY) updateMummy(g, e, dt);
             else                    updateFlyer(g, e, dt, pcx, pcy);
         }
@@ -742,19 +1086,7 @@ void updatePlaying(Game& g, const Input& in, float dt) {
                 continue;
             }
         } else if (p.invuln <= 0 && touching) {
-            g.death.active = true;
-            g.death.phase  = DP_DANCING;
-            g.death.frame  = 0;
-            g.death.loops  = 0;
-            g.death.anim   = 0.0f;
-            g.death.timer  = 0.0f;
-            audio::stopTag("music");
-            audio::stopTag("power");
-            audio::play(audio::SND_TOUCHED, "touched");
-            p.invuln   = 0.0f;
-            p.onGround = false;
-            p.vx       = 0.0f;
-            p.vy       = 0.0f;
+            hitJack(g);
             return;
         }
         ++it;
@@ -767,20 +1099,29 @@ void update(Game& g, const Input& in, float dt) {
     g.time += dt;
     switch (g.state) {
         case TITLE:
-            if (audio::tagCount("title") == 0)
-                audio::play(audio::SND_TITLE, "title", /*loop=*/true);
-            // Attract loop: alternate the banner and the high-score table.
-            g.hs.flashTimer += dt;
-            if (g.hs.flashTimer >= TITLE_FLASH_TIME) {
-                g.hs.flashTimer = 0.0f;
-                g.hs.showTable  = !g.hs.showTable;
+            // As on the arcade (sound command 0x20), the title tune sounds once
+            // each time the banner comes up, not while the table is shown.
+            g.hs.showTable = g.attract.step == 0;
+            if (g.attract.step != 2) {
+                g.hs.titleTune = false;
+            } else if (!g.hs.titleTune) {
+                g.hs.titleTune = true;
+                audio::stopTag("title");
+                audio::play(audio::SND_TITLE, "title");
             }
+            // Attract cycle: table → demo round 1 → banner → demo round 2.
+            g.attract.timer += dt;
+            if (g.attract.step == 0 && g.attract.timer >= ATTRACT_TABLE_TIME)
+                startDemo(g, 1);
+            else if (g.attract.step == 2 && g.attract.timer >= ATTRACT_BANNER_TIME)
+                startDemo(g, 2);
             if (in.jumpPressed) startGame(g);
             break;
         case OPTIONS:
             break;
         case PLAYING:
-            updatePlaying(g, in, dt);
+            if (g.demo.active) updateDemo(g, dt);
+            else               updatePlaying(g, in, dt);
             break;
         case ROUNDCLEAR:
             g.clearTimer -= dt;
@@ -848,13 +1189,15 @@ void update(Game& g, const Input& in, float dt) {
                         while (g.hs.rank < HISCORE_COUNT &&
                                g.score <= g.hi[g.hs.rank].score)
                             g.hs.rank++;
-                        audio::play(audio::SND_NAME_ENTRY, "nameentry");
+                        // The arcade plays tune 0x29 for a new #1 score and
+                        // 0x2A for the other ranks (ROM 0x4865).
+                        audio::play(g.hs.rank == 0 ? audio::SND_NAME_ENTRY
+                                                   : audio::SND_NAME_ENTRY_2,
+                                    "nameentry", /*loop=*/true);
                         g.state = NAMEENTRY;
                     } else {
                         // Didn't qualify: back to the title, table shown first.
-                        g.hs.showTable  = true;
-                        g.hs.flashTimer = 0.0f;
-                        g.state = TITLE;
+                        enterAttract(g, 0);
                     }
                 }
             }

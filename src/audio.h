@@ -17,12 +17,12 @@ namespace audio {
 enum Sid {
     SND_JUMP,                // jump.wav
     SND_WALKING,             // walking.wav
-    SND_TOUCHED,             // 11_Touched_an_Enemy.mp3 — Jack hits an enemy
-    SND_CLEAR,               // 05_Clear.mp3 — level cleared
-    SND_SPECIAL_BONUS,       // 09_Special_Bonus.mp3 — special-bonus tally
-    SND_GAMEOVER,            // 12_Game_Over.mp3
-    SND_POWER_APPEARING,     // 08_Power_Ball_Appearing.mp3 — orb on screen
-    SND_GOT_POWER,           // 07_Got_a_Power_Ball.mp3 — orb collected
+    SND_TOUCHED,             // 11_Touched_an_Enemy.wav — Jack hits an enemy
+    SND_CLEAR,               // 05_Clear.wav — level cleared
+    SND_SPECIAL_BONUS,       // 09_Special_Bonus.wav — special-bonus tally
+    SND_GAMEOVER,            // 12_Game_Over.wav
+    SND_POWER_APPEARING,     // 08_Power_Ball_Appearing.wav — orb on screen
+    SND_GOT_POWER,           // 07_Got_a_Power_Ball.wav — orb collected
     SND_TAKE_BOMB,           // take_bomb.wav — grab an unlit bomb
     SND_TAKE_EXPLODING_BOMB, // take_exploding_bomb.wav — grab the lit bomb
     SND_KILL_ENEMY,          // kill_ennemy.wav — collect a frozen enemy
@@ -31,14 +31,15 @@ enum Sid {
     SND_BONUS,               // coin_bounce.wav — B/E/S coin bounces (arcade cmd 0x1D)
     SND_TAKE_BONUS,          // take_bonus.wav — B/E/S coin collected
     SND_GOT_SPECIAL,         // 04 Got a Special Coin.wav — S-bonus "lucky" screen
-    SND_MUSIC,               // 03_Ringo..._BGM_1.mp3 — in-game music, levels %3==1
-    SND_MUSIC_2,             // 06_BGM_2.mp3 — in-game music, levels %3==0 (3,6,9…)
-    SND_MUSIC_3,             // 10_Lady_Madonna_BGM3.mp3 — in-game music, levels %3==2
-    SND_TITLE,               // 01 Title.wav — title-screen music loop
-    SND_NAME_ENTRY,          // 13_Name_Entry_1.mp3 — high-score name-entry screen
+    SND_MUSIC,               // 03_Ringo..._BGM_1.wav — in-game music, levels %3==1
+    SND_MUSIC_2,             // 06_BGM_2.wav — in-game music, levels %3==0 (3,6,9…)
+    SND_MUSIC_3,             // 10_Lady_Madonna_BGM3.wav — in-game music, levels %3==2
+    SND_TITLE,               // 01 Title.wav — title tune, once per banner showing
+    SND_NAME_ENTRY,          // 13_Name_Entry_1.wav — name entry for a new #1 score
     SND_MUMMY_LAND,          // mummy_land.wav — mummy lands on a platform (arcade cmd 0x17)
     SND_MUMMY_TRANSFORM,     // mummy_transform.wav — mummy hits the floor and transforms (0x2D)
     SND_DEATH_FALL,          // jack_death_fall.wav — Jack falls after being hit (0x14)
+    SND_NAME_ENTRY_2,        // 14 Name Entry 2.wav — name entry for ranks 2-10 (0x2A)
     SND_COUNT
 };
 
@@ -56,6 +57,9 @@ void update();
 // when a non-looping channel drains. `gain` scales volume (1.0 = full).
 void play(Sid id, const char* tag = nullptr, bool loop = false,
           void (*onFinished)() = nullptr, float gain = 1.0f);
+
+// While muted, play() starts nothing (the arcade's attract demo is silent).
+void setMuted(bool muted);
 
 // Tag operations mirror TEsound.stop / pause / resume / findTag.
 void stopTag(const char* tag);

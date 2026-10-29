@@ -13,6 +13,12 @@ inline bool circleOverlapsRect(float x, float y, float r, const SDL_FRect& pl) {
            y + r > pl.y && y - r < pl.y + pl.h;
 }
 
+// Set an enemy's first arcade pose and reset its animation state (spawn,
+// mummy appearing, transform).
+void startEnemyAnim(Enemy& e);
+// Step the enemy's arcade animation by the arcade frames elapsed in dt.
+void animateEnemy(Enemy& e, float dt);
+
 void spawnMummy(Game& g);
 void transformMummy(Game& g, Enemy& e);
 void updateMummy(Game& g, Enemy& e, float dt);

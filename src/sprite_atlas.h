@@ -56,9 +56,6 @@ inline constexpr AtlasRect NAME_FRAME = {317, 212, 35, 19};
 // Boxed multiplier indicators x / 1..5 (16x16 cells).
 inline constexpr AtlasStrip MULT = {4, 192, SIZE_16PX, SIZE_16PX, 20};
 
-// Frozen-enemy coin spin (7 frames).
-inline constexpr AtlasStrip COIN = {307, 115, 14, 14, 14};
-
 // Bonus B / E / S spin (4 frames each, shared y/h, irregular x and width).
 inline constexpr AtlasRect BONUS_B[] = {
     {78, 114, 13, 13}, {98, 114, 12, 13}, {117, 114, 7, 13}, {130, 114, 12, 13},
@@ -69,20 +66,6 @@ inline constexpr AtlasRect BONUS_E[] = {
 inline constexpr AtlasRect BONUS_S[] = {
     {222, 114, 13, 13}, {242, 114, 12, 13}, {261, 114, 7, 13}, {274, 114, 12, 13},
 };
-
-// Transformed chaser frames (2 each).
-inline constexpr AtlasRect SPHERE1 = {  5, 73, 14, 14};
-inline constexpr AtlasRect SPHERE2 = { 85, 73, 14, 14};
-inline constexpr AtlasRect ORB1    = {185, 74, 14, 13};
-inline constexpr AtlasRect ORB2    = {245, 74, 14, 13};
-inline constexpr AtlasRect CLUB1   = {305, 92, 15, 16};
-inline constexpr AtlasRect CLUB2   = {345, 92, 15, 16};
-inline constexpr AtlasRect UFO1    = {  4, 98, 16, 10};
-inline constexpr AtlasRect UFO2    = { 64, 98, 16, 10};
-
-// Horn frames (centred into a 16x16 cell at draw time).
-inline constexpr AtlasRect HORN1 = {280, 54, 15, 14};
-inline constexpr AtlasRect HORN2 = {318, 52, 11, 16};
 
 // Bonus-collect flash (6 frames 32x32).
 inline constexpr AtlasStrip BONUS_TAKEN = {266, 327, 32, 32, 33};
@@ -95,23 +78,34 @@ inline constexpr AtlasRect EXPL[] = {
     {24, 120, 8, 8}, {38, 114, 12, 12}, {56, 112, 16, 16},
 };
 
-// Bird flap frames (BF_COUNT: 3 headings x 3 frames, centred into 16x16).
-inline constexpr AtlasRect BIRD[] = {
-    {140, 53, 16, 16}, {160, 54, 16, 13}, {180, 55, 16, 11},
-    {352, 53, 16, 16}, {373, 54, 16, 13}, {393, 54, 16, 11},
-    {201, 53, 15, 15}, {221, 55, 15, 12}, {241, 55, 15, 11},
+// Enemy frames by arcade sprite code: the 16x16 cell holding that ROM sprite
+// (matched pixel-for-pixel against the gfx ROMs, which store them rotated).
+// Mummy 0x04 stand / 0x05 fall / 0x06-0x08 walk right / 0x09-0x0B walk left;
+// bird 0x29-0x2B sideways / 0x2C-0x2E up-down / 0x2F turning (0x30 is 0x2F
+// mirrored); chasers 0x50-0x53 horn, 0x34 + 0x67-0x6B sphere, 0x54-0x5A orb,
+// 0x38-0x3B club, 0x60-0x65 UFO. Right-facing poses are these, flipped.
+struct CodeCell { int code, x, y; };
+inline constexpr CodeCell ENEMY_CELLS[] = {
+    {0x04,   4, 52}, {0x05,  24, 52}, {0x06,  44, 52}, {0x07,  60, 52},
+    {0x08,  76, 52}, {0x09,  88, 52}, {0x0A, 104, 52}, {0x0B, 120, 52},
+    {0x29, 140, 52}, {0x2A, 160, 52}, {0x2B, 180, 52},
+    {0x2C, 200, 52}, {0x2D, 220, 52}, {0x2E, 240, 52}, {0x2F, 260, 52},
+    {0x50, 280, 52}, {0x51, 300, 52}, {0x52, 316, 52}, {0x53, 332, 52},
+    {0x34, 124, 92},
+    {0x67,   4, 72}, {0x68,  24, 72}, {0x69,  44, 72}, {0x6A,  64, 72}, {0x6B,  84, 72},
+    {0x54, 184, 72}, {0x55, 204, 72}, {0x56, 224, 72}, {0x57, 244, 72},
+    {0x58, 264, 72}, {0x59, 284, 72}, {0x5A, 304, 72},
+    {0x38, 304, 92}, {0x39, 324, 92}, {0x3A, 344, 92}, {0x3B, 364, 92},
+    {0x60,   4, 96}, {0x61,  24, 96}, {0x62,  44, 96},
+    {0x63,  64, 96}, {0x64,  84, 96}, {0x65, 104, 96},
 };
 
-// Mummy frames (MF_COUNT, centred into 16x16).
-inline constexpr AtlasRect MUMMY[] = {
-    {  6, 53, 12, 15},
-    { 45, 53, 11, 15}, { 61, 53, 11, 15}, { 76, 53, 13, 15},
-    { 92, 53, 11, 15}, {108, 53, 11, 15}, {123, 53, 13, 15},
-    { 25, 53, 14, 16},
-};
+// Frozen enemy (code 0x3F): a coin. The rip caught pen 5 mid-glint (white,
+// normally 0xDD yellow) and pen 6 at rest; the arcade flashes those two pens.
+inline constexpr AtlasRect FROZEN = {306, 114, 16, 16};
+constexpr unsigned FROZEN_PEN5 = 0xFFFFFF, FROZEN_PEN6 = 0xEFEF00;   // RGB in the rip
+constexpr unsigned FROZEN_PEN5_REST = 0xDEDE00;
 
-// Power orb base cell (recoloured per family x 4 phases at build time).
-inline constexpr AtlasRect ORB = {292, 116, 12, 12};
 
 // Spawn flash (4 frames, white masks, centred into INIT_FW x INIT_FH).
 inline constexpr AtlasRect INIT[] = {

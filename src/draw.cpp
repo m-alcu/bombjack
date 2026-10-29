@@ -50,7 +50,7 @@ void buildJackSprite(AnimSprite& jack) {
 
 void drawPlayer(SDL_Renderer* r, const Player& p, const AnimSprite& jack,
                 float t, bool dying, int deathPhase, int deathFrame,
-                bool frozen, Color freezeColor) {
+                bool frozen, const Color pal14[8]) {
     if (dying) {
         const JackVarFrame* fr = nullptr;
         if (deathPhase == DP_DANCING) fr = &g_jackDance[std::clamp(deathFrame, 0, 2)];
@@ -68,8 +68,10 @@ void drawPlayer(SDL_Renderer* r, const Player& p, const AnimSprite& jack,
     }
     if (p.invuln > 0 && std::fmod(t, 0.16f) < 0.08f) return;
 
-    // Frozen: the colour-cycled phase textures aren't part of the AnimSprite, so
-    // pick the matching pose index and draw the tinted shimmer directly.
+    // Holding the Power ball (until the freeze ends) the arcade draws Jack with
+    // palette 14, the one the multiplier box and power bar rotate through: each
+    // ROM pen takes its colour from there. The pen masks aren't
+    // part of the AnimSprite, so pick the matching pose here.
     if (frozen) {
         const bool moving = std::fabs(p.vx) > 1.0f;
         const bool left   = p.face < 0;
@@ -78,13 +80,11 @@ void drawPlayer(SDL_Renderer* r, const Player& p, const AnimSprite& jack,
                                             (int)(t / JACK_WALK_FRAME) % 4 : JF_IDLE;
         else if (p.vy < 0.0f)  f = moving ? (left ? JF_FLY_L  : JF_FLY_R)  : JF_FLY;
         else                   f = moving ? (left ? JF_FALL_L : JF_FALL_R) : JF_FALL;
-        if (g_jackPhase[f][0]) {
-            SDL_FRect dst{p.x + PW / 2 - JACK_DRAW_W / 2, p.y + PH - JACK_DRAW_H,
-                          JACK_DRAW_W, JACK_DRAW_H};
-            int ph = (int)(t / 0.1f) & 3;
-            drawTexTinted(r, g_jackPhase[f][ph], dst, freezeColor);
-            return;
-        }
+        SDL_FRect dst{p.x + PW / 2 - JACK_DRAW_W / 2, p.y + PH - JACK_DRAW_H,
+                      JACK_DRAW_W, JACK_DRAW_H};
+        for (int k = 1; k < 8; ++k)
+            if (g_jackPen[f][k]) drawTexTinted(r, g_jackPen[f][k], dst, pal14[k]);
+        return;
     }
     // Normal living Jack: pose, position and animation clock were set on the
     // owned AnimSprite during the simulation step (see driveJack in game.cpp).
@@ -102,142 +102,60 @@ void drawJackVictory(SDL_Renderer* r, const Player& p, float clearTimer) {
     SDL_RenderTexture(r, fr.tex, nullptr, &dst);
 }
 
-static SpriteId enemySprite(const Enemy& e, float t, float& w, float& h) {
-    bool a = std::fmod(t, 0.3f) < 0.15f;
-    w = 28; h = 24;
-    switch (e.kind) {
-        case EK_MUMMY:
-            w = 26; h = 28;
-            if (e.phase == EP_FALL) return SP_MUMMY_FALL;
-            if (e.phase == EP_WALK) return a ? SP_MUMMY_WALK : SP_MUMMY;
-            return SP_MUMMY;
-        case EK_SPHERE: w = h = 26; return a ? SP_SPHERE1 : SP_SPHERE2;
-        case EK_ORB:    w = h = 26; return a ? SP_ORB1    : SP_ORB2;
-        case EK_HORN:   w = h = 26; return a ? SP_HORN1   : SP_HORN2;
-        case EK_CLUB:   w = h = 26; return a ? SP_CLUB1   : SP_CLUB2;
-        case EK_UFO:    w = 28; h = 20; return a ? SP_UFO1 : SP_UFO2;
-        default:        return a ? SP_ENEMY1 : SP_ENEMY2;
-    }
-}
+static Color flashColor(float t);
 
-// Proof-of-concept: the bird is driven through the generic AnimSprite wrapper
-// rather than hand-rolled frame indexing. It owns three directional flap
-// animations (left / right / vertical), each frame layering the body texture
-// with the eye overlay; movement and the eye-pulse tint are set per draw.
-static AnimSprite& birdSprite() {
-    static AnimSprite s = [] {
-        AnimSprite a;
-        a.setSize(26.0f * SPRITE_AR, 24.0f);
-        auto makeAnim = [](int base) {
-            AnimSprite::Animation anim;
-            for (int i = 0; i < 3; ++i)
-                anim.frames.push_back({g_birdTex[base + i], g_birdEye[base + i],
-                                       BIRD_FLAP_FRAME});
-            return anim;
-        };
-        a.addAnimation("left",  makeAnim(BF_LEFT0));
-        a.addAnimation("right", makeAnim(BF_RIGHT0));
-        a.addAnimation("vert",  makeAnim(BF_VERT0));
-        return a;
-    }();
-    return s;
-}
-
-static void drawBird(SDL_Renderer* r, const Enemy& e, float t) {
-    AnimSprite& bird = birdSprite();
-    if (std::fabs(e.vx) >= std::fabs(e.vy))
-        bird.play(e.vx < 0 ? "left" : "right");
-    else
-        bird.play("vert");
-    bird.setClock(t);                 // flap off the shared game clock
-    bird.setPosition(e.x, e.y);
-    bird.setOverlayTint({eyePulse(t), 0, 0});
-    bird.draw(r);
-}
-
-// Same AnimSprite wrapper as the bird: idle / fall single-frame poses plus the
-// two 3-frame directional walks, each layering the body with its eye overlay.
-static AnimSprite& mummySprite() {
-    static AnimSprite s = [] {
-        AnimSprite a;
-        a.setSize(26.0f * SPRITE_AR, 28.0f);
-        auto single = [](int f) {
-            AnimSprite::Animation anim;
-            anim.frames.push_back({g_mummyTex[f], g_mummyEye[f], 0.1f});
-            return anim;
-        };
-        auto walk = [](int base) {
-            AnimSprite::Animation anim;
-            for (int i = 0; i < 3; ++i)
-                anim.frames.push_back({g_mummyTex[base + i], g_mummyEye[base + i],
-                                       MUMMY_WALK_FRAME});
-            return anim;
-        };
-        a.addAnimation("idle",   single(MF_IDLE));
-        a.addAnimation("fall",   single(MF_FALL));
-        a.addAnimation("walk_l", walk(MF_WALK_L0));
-        a.addAnimation("walk_r", walk(MF_WALK_R0));
-        return a;
-    }();
-    return s;
-}
-
-static void drawMummy(SDL_Renderer* r, const Enemy& e, float t) {
-    AnimSprite& mummy = mummySprite();
-    if (e.phase == EP_FALL)
-        mummy.play("fall");
-    else if (e.phase == EP_WALK && std::fabs(e.vx) > 1.0f)
-        mummy.play(e.vx < 0 ? "walk_l" : "walk_r");
-    else
-        mummy.play("idle");
-    mummy.setClock(t);
-    mummy.setPosition(e.x, e.y);
-    mummy.setOverlayTint({eyePulse(t), 0, 0});
-    mummy.draw(r);
-}
-
-static void drawInitEnemy(SDL_Renderer* r, const Enemy& e) {
+// Flash-in / transform flash (0xBC-0xBF, 6 frames each). It uses palette 15,
+// which rotates with the "SIDE-ONE" colours.
+static void drawEnemyFlash(SDL_Renderer* r, const Enemy& e, float t) {
     float prog = 1.0f - std::clamp(e.timer / INIT_ENEMY_TIME, 0.0f, 1.0f);
     int frame = std::min(3, (int)(prog * 4));
     SDL_Texture* tex = g_initEnemyTex[frame];
     if (!tex) return;
     const float w = INIT_FW * SPRITE_AR, h = (float)INIT_FH;
     SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
-    drawTexTinted(r, tex, dst, false, e.spawnTint.r, e.spawnTint.g, e.spawnTint.b);
+    drawTexTinted(r, tex, dst, flashColor(t));
+}
+
+// Frozen enemy: a still coin whose pens 5 and 6 glint white in turn; it
+// blinks 4 frames on / 4 off over the last FROZEN_BLINK_FRAMES of the freeze.
+static void drawFrozenEnemy(SDL_Renderer* r, const Enemy& e, float t,
+                            float freezeTimer) {
+    const int left = (int)(freezeTimer * ARCADE_HZ);
+    if (left < FROZEN_BLINK_FRAMES && (left / 4) % 2 == 0) return;
+    if (!g_frozen.tex) return;
+    const float w = 24.0f * SPRITE_AR, h = 24.0f;
+    SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
+    SDL_RenderTexture(r, g_frozen.tex, nullptr, &dst);
+    const int ph = (int)(t * ARCADE_HZ) % FROZEN_GLINT_CYCLE / FROZEN_GLINT_FRAMES;
+    if (ph < 2 && g_frozenGlint[ph]) SDL_RenderTexture(r, g_frozenGlint[ph], nullptr, &dst);
 }
 
 void drawEnemy(SDL_Renderer* r, const Enemy& e, float t, bool frozen,
                float freezeTimer) {
-    if (e.phase == EP_INIT) { drawInitEnemy(r, e); return; }
-    if (e.phase == EP_APPEAR && std::fmod(t, 0.12f) < 0.06f) return;
-    if (frozen && freezeTimer < 1.0f && std::fmod(t, 0.16f) < 0.08f) return;
-    if (frozen) {
-        const Sprite& c = g_coinFrames[(int)(t * 10.0f) % 7];
-        if (c.tex) {
-            const float w = 24.0f * SPRITE_AR, h = 24.0f;
-            SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
-            SDL_RenderTexture(r, c.tex, nullptr, &dst);
-        }
+    if (e.phase == EP_INIT || (e.phase == EP_DISAPPEAR && !frozen)) {
+        drawEnemyFlash(r, e, t);
         return;
     }
-    if (e.kind == EK_BIRD)  { drawBird(r, e, t);  return; }
-    if (e.kind == EK_MUMMY) { drawMummy(r, e, t); return; }
-    float w, h;
-    SpriteId id = enemySprite(e, t, w, h);
-    w *= SPRITE_AR;
-    bool flip = e.vx < 0;
-    drawSprite(r, id, e.x - w / 2, e.y - h / 2, w, h, flip);
+    if (frozen) { drawFrozenEnemy(r, e, t, freezeTimer); return; }
+    // 0x30 is the 0x2F turning bird drawn mirrored.
+    const int  code = e.code == 0x30 ? 0x2F : e.code & 0xFF;
+    const bool flip = e.flip != (e.code == 0x30);
+    SDL_Texture* tex = g_enemyTex[code];
+    if (!tex) return;
+    const float h = e.kind == EK_MUMMY ? 28.0f : e.kind == EK_BIRD ? 24.0f : 26.0f;
+    const float w = 26.0f * SPRITE_AR;
+    SDL_FRect dst{e.x - w / 2, e.y - h / 2, w, h};
+    drawTexTinted(r, tex, dst, flip, 255, 255, 255);
+    if (SDL_Texture* eye = g_enemyEye[code])
+        drawTexTinted(r, eye, dst, flip, eyePulse(t), 0, 0);
 }
 
-void drawPowerOrb(SDL_Renderer* r, float x, float y, float t, int family) {
-    int fam   = (family % 7 + 7) % 7;
-    int phase = (int)(t / 0.1f) & 3;
-    const Sprite& f = g_orbCycle[fam][phase];
-    if (f.tex) {
-        const float w = 24.0f * SPRITE_AR, h = 24.0f;
-        SDL_FRect dst{x - w / 2, y - h / 2, w, h};
-        SDL_RenderTexture(r, f.tex, nullptr, &dst);
-    }
+// The Power ball (sprite 0x3D) is drawn in palette 14 too, pen by pen.
+void drawPowerOrb(SDL_Renderer* r, float x, float y, const Color pal14[8]) {
+    const float w = 32.0f * SPRITE_AR, h = 32.0f;
+    SDL_FRect dst{x - w / 2, y - h / 2, w, h};
+    for (int k = 1; k < 8; ++k)
+        if (g_ballPen[k]) drawTexTinted(r, g_ballPen[k], dst, pal14[k]);
 }
 
 void drawBackground(SDL_Renderer* r, int screen, int imgStyle) {
@@ -265,19 +183,8 @@ void drawBackground(SDL_Renderer* r, int screen, int imgStyle) {
     }
 }
 
-// Top-HUD colour cycling, measured from the arcade in MAME. The hardware rotates
-// palette 14 (multiplier box + power bar) and palette 15 ("SIDE-ONE") one entry
-// every 3 frames through these cyclic tables. While the Power ball is on screen
-// and during the freeze that follows, palette 14 cycles HUD_ROT_POWER instead.
-static constexpr Color HUD_ROT_BOX[42] = {
-    {  0,136,255}, {  0,102,255}, {  0, 68,255}, {  0, 34,255}, {  0,  0,255}, { 34,  0,255},
-    { 68,  0,255}, {102,  0,255}, {136,  0,255}, {170,  0,255}, {204,  0,255}, {255,  0,255},
-    {255,  0,204}, {255,  0,170}, {255,  0,136}, {255,  0,102}, {255,  0, 68}, {255,  0, 34},
-    {255,  0,  0}, {255, 34,  0}, {255, 68,  0}, {255,102,  0}, {255,136,  0}, {255,170,  0},
-    {255,204,  0}, {255,255,  0}, {204,255,  0}, {170,255,  0}, {136,255,  0}, {102,255,  0},
-    { 68,255,  0}, { 34,255,  0}, {  0,255,  0}, {  0,255, 34}, {  0,255, 68}, {  0,255,102},
-    {  0,255,136}, {  0,255,170}, {  0,255,204}, {  0,255,255}, {  0,204,255}, {  0,170,255},
-};
+// Top-HUD colour cycling. The hardware rotates palette 15 ("SIDE-ONE") one
+// entry every 3 frames through this table (measured from the arcade in MAME).
 static constexpr Color HUD_ROT_SIDE[35] = {
     {255,255,102}, {255,255,136}, {255,255,170}, {255,255,204}, {255,255,255}, {204,204,255},
     {170,170,255}, {136,136,255}, {102,102,255}, { 68, 68,255}, { 34, 34,255}, {  0,  0,255},
@@ -286,11 +193,36 @@ static constexpr Color HUD_ROT_SIDE[35] = {
     {255,  0, 34}, {255,  0,  0}, {255, 34,  0}, {255, 68,  0}, {255,102,  0}, {255,136,  0},
     {255,170,  0}, {255,204,  0}, {255,255,  0}, {255,255, 34}, {255,255, 68},
 };
-static constexpr Color HUD_ROT_POWER[8] = {
-    {255,  0,  0}, {255, 34, 34}, {255, 68, 68}, {255,102,102},
-    {255,136,136}, {255,170,170}, {255,204,204}, {255,238,238},
-};
 constexpr int HUD_ROT_FRAMES = 3;   // arcade frames per rotation step
+
+// Palette 14 (multiplier box, power bar, Power ball, powered-up Jack) tables,
+// in the ROM's xBGR 4:4:4 words: the rainbow (0x0D48) and the Power ball's
+// colour families 1-7 (0x0D9E): blue, red, magenta, green, cyan, yellow,
+// each fading to white, and silver.
+static constexpr uint16_t PAL14_RAINBOW[42] = {
+    0x000F, 0x002F, 0x004F, 0x006F, 0x008F, 0x00AF, 0x00CF, 0x00FF,
+    0x00FC, 0x00FA, 0x00F8, 0x00F6, 0x00F4, 0x00F2, 0x00F0, 0x02F0,
+    0x04F0, 0x06F0, 0x08F0, 0x0AF0, 0x0CF0, 0x0FF0, 0x0FC0, 0x0FA0,
+    0x0F80, 0x0F60, 0x0F40, 0x0F20, 0x0F00, 0x0F02, 0x0F04, 0x0F06,
+    0x0F08, 0x0F0A, 0x0F0C, 0x0F0F, 0x0C0F, 0x0A0F, 0x080F, 0x060F,
+    0x040F, 0x020F,
+};
+static constexpr uint16_t PAL14_FAMILY[7][8] = {
+    {0x0F00, 0x0F22, 0x0F44, 0x0F66, 0x0F88, 0x0FAA, 0x0FCC, 0x0FEE},
+    {0x000F, 0x022F, 0x044F, 0x066F, 0x088F, 0x0AAF, 0x0CCF, 0x0EEF},
+    {0x0F0F, 0x0F2F, 0x0F4F, 0x0F6F, 0x0F8F, 0x0FAF, 0x0FCF, 0x0FEF},
+    {0x00F0, 0x02F2, 0x04F4, 0x06F6, 0x08F8, 0x0AFA, 0x0CFC, 0x0EFE},
+    {0x0FF0, 0x0FF2, 0x0FF4, 0x0FF6, 0x0FF8, 0x0FFA, 0x0FFC, 0x0FFE},
+    {0x00FF, 0x02FF, 0x04FF, 0x06FF, 0x08FF, 0x0AFF, 0x0CFF, 0x0EFF},
+    {0x0FFF, 0x0EEE, 0x0DDD, 0x0CCC, 0x0BBB, 0x0AAA, 0x0999, 0x0888},
+};
+static constexpr Color xbgr444(uint16_t v) {
+    return {(Uint8)((v & 15) * 17), (Uint8)((v >> 4 & 15) * 17), (Uint8)((v >> 8 & 15) * 17)};
+}
+
+static Color flashColor(float t) {
+    return HUD_ROT_SIDE[(int)(t * ARCADE_HZ / FLASH_ROT_FRAMES) % (int)std::size(HUD_ROT_SIDE)];
+}
 
 // Current rotation step, and entry `step + offset` of a cyclic table.
 static int hudRotStep(const Game& g) { return (int)(g.time * ARCADE_HZ / HUD_ROT_FRAMES); }
@@ -299,32 +231,39 @@ static Color hudRot(const Color (&table)[N], int step, int offset) {
     return table[((step + offset) % N + N) % N];
 }
 
+// Palette 14 pen `pen` (1-7). The loaded table rotates one entry every
+// HUD_ROT_FRAMES starting from its first, pen k showing entry step + k - 1.
+// The box frame is pen 7, its glyphs pen 1 and the power bar bands pens 6
+// down to 2.
+static Color pal14Pen(const Game& g, int pen) {
+    const int step = std::max(0, (int)((g.time - g.pal14Time) * ARCADE_HZ / HUD_ROT_FRAMES));
+    if (g.pal14 >= 1 && g.pal14 <= 7)
+        return xbgr444(PAL14_FAMILY[g.pal14 - 1][(step + pen - 1) % 8]);
+    return xbgr444(PAL14_RAINBOW[(step + pen - 1) % (int)std::size(PAL14_RAINBOW)]);
+}
+
 // Multiplier box (screen x 92..131, y 0..15) and power bar, as the arcade draws
-// them: the box frame shows entry s of the rotating table and the glyphs entry
-// s-6; the power bar grows outward from both box sides 2 px per 2 power units
-// (20 = full), each 4 px band k showing entry s-1-k, so colour ripples outward.
+// them in palette 14: the power bar grows outward from both box sides 2 px per
+// 2 power units (20 = full, as it shows while the Power ball is up or the
+// freeze lasts), each 4 px band k in pen 6-k, so colour ripples outward.
 static void drawMultiplierAndPower(SDL_Renderer* r, const Game& g) {
-    const int  s       = hudRotStep(g);
-    const bool powerUp = g.orb.active || g.freezeTimer > 0.0f;   // red cycle, full bar
-    auto rot = [&](int offset) {
-        return powerUp ? hudRot(HUD_ROT_POWER, s, offset) : hudRot(HUD_ROT_BOX, s, offset);
-    };
+    const bool powerUp = g.orb.active || g.freezeTimer > 0.0f;
 
     const int units = std::clamp((int)(g.powerMeter * 2.0f + 0.001f), 0, 20);  // arcade 0..20
     const int barW  = powerUp ? 20 : 2 * (units / 2);
     for (int d = 0; d < barW; d += 4) {
         const float w = (float)std::min(4, barW - d);
-        setCol(r, rot(-1 - d / 4));
+        setCol(r, pal14Pen(g, 6 - d / 4));
         fillR(r, 92.0f - d - w, 0, w, 16);
         fillR(r, 132.0f + d,    0, w, 16);
     }
 
-    const Color frameC = rot(0);
+    const Color frameC = pal14Pen(g, 7);
     setCol(r, frameC);
     fillR(r, 92,  0, 4, 16);
     fillR(r, 128, 0, 4, 16);
     if (!g_multBorder[0] || !g_multSymbol[0]) return;
-    const Color glyphC = rot(-6);
+    const Color glyphC = pal14Pen(g, 1);
     const int m = std::clamp(g.multiplier, 1, 5);
     auto cell = [&](int idx, SDL_FRect dst) {
         drawTexTinted(r, g_multSymbol[idx], dst, glyphC);
@@ -368,7 +307,7 @@ void drawHud(SDL_Renderer* r, const Game& g) {
 }
 
 void drawStartIntro(SDL_Renderer* r, const Game& g) {
-    if (g.startAnim <= 0.0f || !g_startBg[0].tex) return;
+    if (g.startAnim <= 0.0f || g.demo.active || !g_startBg[0].tex) return;
     const float scale  = 1.0f;
     const float w      = 56.0f * scale, h = g_startBg[0].h * scale;
     const float finalX = (SCREEN_W - w) / 2.0f;
@@ -668,7 +607,9 @@ void render(SDL_Renderer* r, const Game& g) {
         drawTexTinted(r, f.tex, dst, false, 255, 215, 0);
     }
 
-    if (g.orb.active) drawPowerOrb(r, g.orb.x, g.orb.y, g.time, g.orb.family);
+    Color pal14[8];
+    for (int k = 1; k < 8; ++k) pal14[k] = pal14Pen(g, k);
+    if (g.orb.active) drawPowerOrb(r, g.orb.x, g.orb.y, pal14);
 
     if (g.bonus.active) {
         const Sprite* set = g.bonus.kind == BK_E ? g_bonusE
@@ -689,13 +630,24 @@ void render(SDL_Renderer* r, const Game& g) {
         SDL_RenderTexture(r, f.tex, nullptr, &dst);
     }
 
+    // The arcade's demo keeps a colour-cycling "GAME OVER" in the middle of the
+    // playfield, under the sprites.
+    if (g.demo.active && g_gameOverTex) {
+        useScreen(r);
+        Color c = colorCycle3(g.time);
+        const SDL_FRect dst{(SCREEN_W - GAMEOVER_W) / 2.0f, (SCREEN_H - GAMEOVER_H) / 2.0f,
+                            (float)GAMEOVER_W, (float)GAMEOVER_H};
+        drawTexTinted(r, g_gameOverTex, dst, false, c.r, c.g, c.b);
+        useWorld(r);
+    }
+
     bool frozen = g.freezeTimer > 0.0f;
     for (const Enemy& e : g.enemies) drawEnemy(r, e, g.time, frozen, g.freezeTimer);
     if (g.state == ROUNDCLEAR)
         drawJackVictory(r, g.p, g.clearTimer);
     else if (g.state != GAMEOVER)
         drawPlayer(r, g.p, g.jackSprite, g.time, g.death.active, g.death.phase,
-                   g.death.frame, frozen, g.freezeColor);
+                   g.death.frame, frozen, pal14);
 
     useScreen(r);
     drawPlayfieldBorder(r, currentScreen(g));
