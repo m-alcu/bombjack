@@ -101,11 +101,16 @@ static float vMiterLen(const VJoin& j, int i, int w) {
     return j.boxH * f;
 }
 
+#ifndef ASSET_ROOT
+#define ASSET_ROOT "."
+#endif
+
 static stbi_uc* loadPngFile(const char* name, int* w, int* h) {
-    char buf1[512], buf2[512];
+    char buf0[512], buf1[512], buf2[512];
+    std::snprintf(buf0, sizeof(buf0), "%s/assets/%s", ASSET_ROOT, name);
     std::snprintf(buf1, sizeof(buf1), "assets/%s", name);
     std::snprintf(buf2, sizeof(buf2), "../assets/%s", name);
-    const char* candidates[] = {buf1, buf2};
+    const char* candidates[] = {buf0, buf1, buf2};
     int comp = 0;
     for (const char* p : candidates) {
         size_t sz = 0;
